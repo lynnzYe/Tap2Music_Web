@@ -4,7 +4,7 @@ window.my = window.my || {};
 
 (function (tf, my) {
   const PIANO_NUM_KEYS = 88;
-  const testThres = 0.025;
+  const testThres = 0.03;
   const UCTap_CKPT_DIR = `/public/model`;
   const SEQ_LEN = 128;
 
@@ -153,52 +153,55 @@ window.my = window.my || {};
     }
 
     forward(feat, hx = null) {
-      // feat: (B, 4) -> [pitch, dt, dur, vel]
-      if (hx === null) hx = this.initHidden(feat.shape[0]);
+      return tf.tidy(() => {
+        // feat: (B, 4) -> [pitch, dt, dur, vel]
+        if (hx === null) hx = this.initHidden(feat.shape[0]);
 
-      // --- Extract features ---
-      const pitchIdx = feat.slice([0, 0], [-1, 1]).squeeze([1]).toInt(); // (B)
-      const dt = feat.slice([0, 1], [-1, 1]); // (B,1)
-      const dur = feat.slice([0, 2], [-1, 1]); // (B,1)
-      const vel = feat.slice([0, 3], [-1, 1]); // (B,1)
+        // --- Extract features ---
+        const pitchIdx = feat.gather([0], 1).reshape([-1]).toInt();
+        const dt = feat.gather([1], 1);
+        const dur = feat.gather([2], 1);
+        const vel = feat.gather([3], 1);
 
-      // --- Pitch embedding ---
-      const pitchEmb = tf.gather(
-        this._params["model.pitch_emb.weight"], // (89,32)
-        pitchIdx
-      ); // (B,32)
+        // --- Pitch embedding ---
+        const pitchEmb = tf.gather(
+          this._params["model.pitch_emb.weight"], // (89,32)
+          pitchIdx
+        ); // (B,32)
 
-      // --- Concatenate inputs (dim = 35) ---
-      let x = tf.concat([pitchEmb, dt, dur, vel], 1); // (B,35)
+        // --- Concatenate inputs (dim = 35) ---
+        let x = tf.concat([pitchEmb, dt, dur, vel], 1); // (B,35)
 
-      // --- Input projection ---
-      x = tf.add(
-        tf.matMul(x, this._params["model.input_linear.weight"], false, true),
-        this._params["model.input_linear.bias"]
-      ); // (B,128)
+        // --- Input projection ---
+        // Linear: xW^T + b
+        x = tf.add(
+          tf.matMul(x, this._params["model.input_linear.weight"], false, true),
+          this._params["model.input_linear.bias"]
+        ); // (B,128)
 
-      // --- LSTM ---
-      let c = hx.c.slice();
-      let h = hx.h.slice();
+        // --- LSTM ---
+        let c = hx.c.slice();
+        let h = hx.h.slice();
 
-      for (let l = 0; l < this.rnnNumLayers; ++l) {
-        [c[l], h[l]] = this._cells[l](x, c[l], h[l]);
-        x = h[l];
-      }
+        for (let l = 0; l < this.rnnNumLayers; ++l) {
+          [c[l], h[l]] = this._cells[l](x, c[l], h[l]);
+          x = h[l];
+        }
 
-      // --- Output head ---
-      let y = tf.add(
-        tf.matMul(x, this._params["model.out_head.0.weight"], false, true),
-        this._params["model.out_head.0.bias"]
-      );
-      y = tf.relu(y);
+        // --- Output head ---
+        let y = tf.add(
+          tf.matMul(x, this._params["model.out_head.0.weight"], false, true),
+          this._params["model.out_head.0.bias"]
+        );
+        y = tf.relu(y);
 
-      y = tf.add(
-        tf.matMul(y, this._params["model.out_head.3.weight"], false, true),
-        this._params["model.out_head.3.bias"]
-      ); // (B,89)
+        y = tf.add(
+          tf.matMul(y, this._params["model.out_head.3.weight"], false, true),
+          this._params["model.out_head.3.bias"]
+        ); // (B,89)
 
-      return [y, new LSTMHiddenState(c, h)];
+        return [y, new LSTMHiddenState(c, h)];
+      });
     }
   }
   async function testUCTap() {

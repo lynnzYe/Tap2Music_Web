@@ -50,11 +50,13 @@ const App: React.FC = () => {
         tapRef.current = new TapWrapper();
         await tapRef.current.load();
         setTapStatus("Ready!");
+        setLoadingModel(false);
         setTapError(false);
       } catch (e) {
         console.error(e)
         setTapStatus("Model self-test failed! This should not happen.");
         setTapError(true);
+        setLoadingModel(false);
       }
     }
     initTap();

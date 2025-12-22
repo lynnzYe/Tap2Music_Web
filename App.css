@@ -1,3 +1,5 @@
+@import "tailwindcss";
+
 .loading-screen,
 .error-screen {
     display: flex;
