@@ -4,7 +4,7 @@ class TapWrapper {
     private tapper: any;
 
     constructor() {
-        if (!window.my?.BeatTracker) throw new Error("Not loaded");
+        if (!window.my?.TapConverter) throw new Error("Not loaded");
         this.tapper = new window.my.TapConverter();
     }
 

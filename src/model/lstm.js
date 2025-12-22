@@ -68,8 +68,6 @@ window.my = window.my || {};
     // https://pytorch.org/docs/stable/generated/torch.nn.LSTM.html?highlight=lstm#torch.nn.LSTM
     return (data, c, h) => {
       // NOTE: Modified from Tensorflow.JS basicLSTMCell (see first reference)
-      console.debug("kernet input hidden", kernelInputHidden)
-      
       // Create empty forgetBias
       const forgetBias = tf.scalar(0, "float32");
 
@@ -127,12 +125,17 @@ window.my = window.my || {};
       // Create LSTM cell closures
       this._cells = [];
       for (let l = 0; l < this.rnnNumLayers; ++l) {
+        const wih = this._params[`model.lstm.weight_ih_l${l}`];
+        if (!wih) {
+          throw new Error(`Missing LSTM weights for layer ${l}`);
+        }
+
         this._cells.push(
           pyTorchLSTMCellFactory(
-            this._params[`model.cells.${l}.weight_ih`],
-            this._params[`model.cells.${l}.weight_hh`],
-            this._params[`model.cells.${l}.bias_ih`],
-            this._params[`model.cells.${l}.bias_hh`]
+            this._params[`model.lstm.weight_ih_l${l}`],
+            this._params[`model.lstm.weight_hh_l${l}`],
+            this._params[`model.lstm.bias_ih_l${l}`],
+            this._params[`model.lstm.bias_hh_l${l}`]
           )
         );
       }
@@ -150,54 +153,40 @@ window.my = window.my || {};
     }
 
     forward(feat, hx = null) {
-      // feat: (B, T, 4) -> [pitch, dt, dur, vel]
+      // feat: (B, 4) -> [pitch, dt, dur, vel]
       if (hx === null) hx = this.initHidden(feat.shape[0]);
 
       // --- Extract features ---
-      console.debug("Extract features");
-      // feat: (B, T, 4)
-      const pitch = feat
-        .slice([0, 0, 0], [-1, -1, 1]) // (B, T, 1)
-        .squeeze([2]) // (B, T)
-        .toInt();
-      const dt = feat.slice([0, 0, 1], [-1, -1, 1]).squeeze([2]);
-      const dur = feat.slice([0, 0, 2], [-1, -1, 1]).squeeze([2]);
-      const vel = feat.slice([0, 0, 3], [-1, -1, 1]).squeeze([2]);
+      const pitchIdx = feat.slice([0, 0], [-1, 1]).squeeze([1]).toInt(); // (B)
+      const dt = feat.slice([0, 1], [-1, 1]); // (B,1)
+      const dur = feat.slice([0, 2], [-1, 1]); // (B,1)
+      const vel = feat.slice([0, 3], [-1, 1]); // (B,1)
 
       // --- Pitch embedding ---
       const pitchEmb = tf.gather(
         this._params["model.pitch_emb.weight"], // (89,32)
-        pitch
-      ); // (B,T,32)
+        pitchIdx
+      ); // (B,32)
 
       // --- Concatenate inputs (dim = 35) ---
-      let x = tf.concat(
-        [
-          pitchEmb,
-          tf.expandDims(dt, -1),
-          tf.expandDims(dur, -1),
-          tf.expandDims(vel, -1),
-        ],
-        -1
-      ); // (B,T,35)
+      let x = tf.concat([pitchEmb, dt, dur, vel], 1); // (B,35)
 
       // --- Input projection ---
       x = tf.add(
         tf.matMul(x, this._params["model.input_linear.weight"], false, true),
         this._params["model.input_linear.bias"]
-      ); // (B,T,128)
+      ); // (B,128)
 
       // --- LSTM ---
-      console.debug("start LSTM")
       let c = hx.c.slice();
       let h = hx.h.slice();
 
       for (let l = 0; l < this.rnnNumLayers; ++l) {
         [c[l], h[l]] = this._cells[l](x, c[l], h[l]);
-        x = h[l]; // feed next layer
+        x = h[l];
       }
 
-      // --- Output head (out_head) ---
+      // --- Output head ---
       let y = tf.add(
         tf.matMul(x, this._params["model.out_head.0.weight"], false, true),
         this._params["model.out_head.0.bias"]
@@ -207,7 +196,7 @@ window.my = window.my || {};
       y = tf.add(
         tf.matMul(y, this._params["model.out_head.3.weight"], false, true),
         this._params["model.out_head.3.bias"]
-      ); // (B,T,89)
+      ); // (B,89)
 
       return [y, new LSTMHiddenState(c, h)];
     }
@@ -230,13 +219,18 @@ window.my = window.my || {};
       him1 = tf.tidy(() => {
         const row = t.feats[i];
         const feats = tf.tensor(
-          [[[row[0], row[1], row[2], row[3]]]],
-          [1, 1, 4],
+          [[row[0], row[1], row[2], row[3]]],
+          [1, 4],
           "float32"
         );
         const [pitch_logits, hi] = decoder.forward(feats, him1);
 
-        const expectedLogits = tf.tensor(t["pitch_logits"][i], "float32");
+        const expectedLogits = tf.tensor(
+          [t["pitch_logits"][i]], // wrap in batch dim
+          [1, 89],
+          "float32"
+        );
+
         const err = tf
           .sum(tf.abs(tf.sub(pitch_logits, expectedLogits)))
           .arraySync();
@@ -251,7 +245,7 @@ window.my = window.my || {};
     if (isNaN(totalErr) || totalErr > testThres) {
       // was 0.015
       console.log("Test failed with error=", totalErr);
-      throw "Failed test";
+      throw new Error("Failed test");
     } else if (totalErr > 0.015) {
       console.log("Warning: total decoder error is", totalErr);
     }

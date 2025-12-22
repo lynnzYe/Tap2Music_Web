@@ -42,14 +42,20 @@ const App: React.FC = () => {
         return;
       }
       setTapStatus("Running model self-test...");
-      if (!window._midiTestRan) {
-        window._midiTestRan = true;
-        await window.my.testUCTap();
+      try {
+        if (!window._midiTestRan) {
+          window._midiTestRan = true;
+          await window.my.testUCTap();
+        }
+        tapRef.current = new TapWrapper();
+        await tapRef.current.load();
+        setTapStatus("Ready!");
+        setTapError(false);
+      } catch (e) {
+        console.error(e)
+        setTapStatus("Model self-test failed! This should not happen.");
+        setTapError(true);
       }
-      tapRef.current = new TapWrapper();
-      await tapRef.current.load();
-      setTapStatus("Ready!");
-      setTapError(false);
     }
     initTap();
   }, []);

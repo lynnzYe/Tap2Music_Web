@@ -10,7 +10,7 @@ export const DOWNBEAT_THRES = 0.5;
       // Performance state
       this.lastTime = null;
       this.lastDur = 0;
-      this.lastPitch = null;
+      this.lastPitchIdx = null;
       this.lastHidden = null;
     }
 
@@ -18,7 +18,7 @@ export const DOWNBEAT_THRES = 0.5;
       await this.dec.init();
 
       // Warm start
-      this.track(0, 21, 0);
+      this.track(0, 64);
       this.reset();
     }
 
@@ -27,7 +27,7 @@ export const DOWNBEAT_THRES = 0.5;
         this.lastHidden.dispose();
       }
       this.lastTime = null;
-      this.lastPitch = null;
+      this.lastPitchIdx = null;
       this.lastHidden = null;
     }
 
@@ -75,7 +75,7 @@ export const DOWNBEAT_THRES = 0.5;
         console.log("Warning: Specified time is in the past");
         deltaTime = 0;
       }
-      if (this.lastPitch < 21 || this.lastPitch >= 21 + my.PIANO_NUM_KEYS) {
+      if (this.lastPitchIdx < 0 || this.lastPitchIdx >= my.PIANO_NUM_KEYS) {
         throw new Error("Specified MIDI note is out of piano's range");
       }
 
@@ -87,8 +87,8 @@ export const DOWNBEAT_THRES = 0.5;
       const [pitchIdxTensor, hidden] = tf.tidy(() => {
         // Pitch within 88 classes
         let feat = tf.tensor(
-          [[[this.lastPitch - 21, log1pDeltaTime, log1pDur, velocity]]],
-          [1, 1, 4],
+          [[this.lastPitchIdx, log1pDeltaTime, log1pDur, velocity]],
+          [1, 4],
           "float32"
         );
         const [plgt, hi] = this.dec.forward(feat, prevHidden);
@@ -103,7 +103,7 @@ export const DOWNBEAT_THRES = 0.5;
 
       // Update state
       if (prevHidden !== null) prevHidden.dispose();
-      this.lastPitch = pitchIdx + 21;
+      this.lastPitchIdx = pitchIdx;
       this.lastTime = time;
       this.lastHidden = hidden;
       return pitchIdx + 21;
