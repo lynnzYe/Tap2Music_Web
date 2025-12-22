@@ -1,0 +1,6 @@
+
+{
+  "name": "Tap2Music",
+  "description": "A high-performance 88-key virtual piano and MIDI visualizer with real-time synthesis and MIDI routing capabilities.",
+  "requestFramePermissions": []
+}
