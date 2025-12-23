@@ -3,8 +3,19 @@ import Keyboard from "./components/Keyboard";
 import Visualizer from "./components/Visualizer";
 import { audioEngine } from "./src/services/AudioEngine";
 import { midiManager } from "./src/services/MidiManager";
-import { inferenceEngine } from "./src/services/InferenceEngine";
-import { NoteEvent, NOTE_COLORS, PIANO_CONFIG } from "./types";
+import {
+  BaseInferenceEngine,
+  InferenceFactory,
+  InferenceSubMode,
+} from "./src/services/InferenceEngine";
+import {
+  NoteEvent,
+  NOTE_COLORS,
+  PIANO_CONFIG,
+  FREEPLAY_KEY_MAP,
+  TAP2MUSIC_KEY_MAP,
+} from "./src/types/types";
+
 import {
   Volume2,
   VolumeX,
@@ -13,8 +24,10 @@ import {
   Piano as PianoIcon,
   Sparkles,
   Zap,
+  Layers,
+  UserCircle,
+  Hand,
 } from "lucide-react";
-import TapWrapper from "./src/model/TapWrapper";
 import "./App.css";
 
 type PlayMode = "freeplay" | "tap2music";
@@ -28,15 +41,19 @@ const App: React.FC = () => {
   const [inputs, setInputs] = useState<any[]>([]);
   const [outputs, setOutputs] = useState<any[]>([]);
   const [mode, setMode] = useState<PlayMode>("freeplay");
+  const [subMode, setSubMode] = useState<InferenceSubMode>("uc");
+
   const [tapErr, setTapError] = useState(false);
   const [tapStatus, setTapStatus] = useState("Initializing model...");
   const [loadingModel, setLoadingModel] = useState(true);
 
-  const tapRef = React.useRef<TapWrapper | null>(null);
+  const engineRef = React.useRef<BaseInferenceEngine | null>(null);
+  const pressedComputerKeys = useRef<Set<string>>(new Set());
+
   // Test Tap2Music Model
   useEffect(() => {
     async function initTap() {
-      if (!window.my || !window.my.testUCTap || !window.my.TapConverter) {
+      if (!window.my || !window.my.testUCTap || !window.my.UCTapConverter) {
         console.error("window or tap model undefined");
         setTapError(true);
         return;
@@ -46,14 +63,13 @@ const App: React.FC = () => {
         if (!window._midiTestRan) {
           window._midiTestRan = true;
           await window.my.testUCTap();
+          // Add more tests
         }
-        tapRef.current = new TapWrapper();
-        await tapRef.current.load();
         setTapStatus("Ready!");
-        setLoadingModel(false);
         setTapError(false);
+        setLoadingModel(false);
       } catch (e) {
-        console.error(e)
+        console.error(e);
         setTapStatus("Model self-test failed! This should not happen.");
         setTapError(true);
         setLoadingModel(false);
@@ -61,6 +77,25 @@ const App: React.FC = () => {
     }
     initTap();
   }, []);
+
+  useEffect(() => {
+    async function switchTapModel() {
+      if (mode === "tap2music") {
+        // Release old engine
+        if (engineRef.current) engineRef.current.dispose();
+        // Create new engine
+        engineRef.current = InferenceFactory.create(subMode);
+        await engineRef.current.load();
+        // TODO: check and fix memory leakage tensorflow.
+      } else {
+        if (engineRef.current) {
+          engineRef.current.dispose();
+          engineRef.current = null;
+        }
+      }
+    }
+    switchTapModel();
+  }, [mode, subMode]);
 
   // Keep a ref to events for performance
   const noteEventsRef = useRef<NoteEvent[]>([]);
@@ -78,7 +113,7 @@ const App: React.FC = () => {
         next.add(pitch);
         return next;
       });
-
+      // console.debug("noteon: ", pitch, velocity);
       audioEngine.noteOn(pitch, velocity);
 
       if (midiOutEnabled) {
@@ -125,12 +160,17 @@ const App: React.FC = () => {
   // Public API exposed for the model/input
   const noteOn = useCallback(
     (inputPitch: number, velocity: number = 100) => {
+      // Only trigger if inputPitch is not already active
+      if (pitchMap.current.has(inputPitch)) return;
+
       let triggeredPitch = inputPitch;
 
-      if (mode === "tap2music") {
-        triggeredPitch = inferenceEngine.predict(inputPitch, velocity);
+      if (mode === "tap2music" && engineRef.current) {
+        const now = performance.now();
+        triggeredPitch = engineRef.current.predict(now, velocity);
       }
 
+      // Save mapping and trigger note
       pitchMap.current.set(inputPitch, triggeredPitch);
       triggerNoteOn(triggeredPitch, velocity);
     },
@@ -139,15 +179,29 @@ const App: React.FC = () => {
 
   const noteOff = useCallback(
     (inputPitch: number) => {
-      const triggeredPitch = pitchMap.current.get(inputPitch) ?? inputPitch;
+      const triggeredPitch = pitchMap.current.get(inputPitch);
+      if (triggeredPitch === undefined) return; // ignore unmapped note
+
+      if (mode === "tap2music" && engineRef.current) {
+        engineRef.current.updateNoteoff(performance.now());
+      }
+
       triggerNoteOff(triggeredPitch);
       pitchMap.current.delete(inputPitch);
     },
-    [triggerNoteOff]
+    [mode, triggerNoteOff]
   );
+
+  const noteOnRef = useRef(noteOn);
+  const noteOffRef = useRef(noteOff);
+  useEffect(() => {
+    noteOnRef.current = noteOn;
+    noteOffRef.current = noteOff;
+  }, [noteOn, noteOff]);
 
   const clear = useCallback(() => {
     setActiveNotes(new Set());
+    if (engineRef.current) engineRef.current.reset();
     noteEventsRef.current = [];
     setNoteEvents([]);
     pitchMap.current.clear();
@@ -158,23 +212,71 @@ const App: React.FC = () => {
     setMode((prev) => (prev === "freeplay" ? "tap2music" : "freeplay"));
   };
 
+  // Computer Keyboard Handlers
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat) return;
+      const key = e.key.toLowerCase();
+
+      let pitch: number | undefined;
+      if (mode === "freeplay") {
+        pitch = FREEPLAY_KEY_MAP[key];
+      } else {
+        pitch = TAP2MUSIC_KEY_MAP[key];
+      }
+
+      if (pitch !== undefined) {
+        pressedComputerKeys.current.add(key);
+        noteOn(pitch, 100);
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      if (pressedComputerKeys.current.has(key)) {
+        pressedComputerKeys.current.delete(key);
+        let pitch: number | undefined;
+        if (mode === "freeplay") {
+          pitch = FREEPLAY_KEY_MAP[key];
+        } else {
+          pitch = TAP2MUSIC_KEY_MAP[key];
+        }
+        if (pitch !== undefined) {
+          noteOff(pitch);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, [mode, noteOn, noteOff]);
+
   useEffect(() => {
     const initMidi = async () => {
+      // Only initialize if not already done (optional but safer)
       await midiManager.init();
       setInputs(midiManager.getInputs());
       setOutputs(midiManager.getOutputs());
 
+      // This adds a listener. By having [] as dependencies,
+      // we ensure this code ONLY runs once.
       midiManager.onMessage((status, d1, d2) => {
         const type = status & 0xf0;
         if (type === 0x90 && d2 > 0) {
-          noteOn(d1, d2);
+          noteOnRef.current(d1, d2);
         } else if (type === 0x80 || (type === 0x90 && d2 === 0)) {
-          noteOff(d1);
+          noteOffRef.current(d1);
         }
       });
     };
     initMidi();
-  }, [noteOn, noteOff]);
+
+    // Empty dependency array is critical here!
+  }, []);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -205,102 +307,148 @@ const App: React.FC = () => {
   return (
     <div className="h-screen w-screen flex flex-col bg-slate-950 text-white overflow-hidden select-none">
       {/* Header Controls */}
-      <header className="flex items-center justify-between px-6 py-3 bg-slate-900/60 backdrop-blur-xl border-b border-white/5 z-50">
-        <div className="flex items-center gap-6">
-          <div
-            className="flex items-center gap-3 cursor-pointer group"
-            onClick={toggleMode}
-          >
+      <header className="flex flex-col bg-slate-900/60 backdrop-blur-xl border-b border-white/5 z-50">
+        <div className="flex items-center justify-between px-6 py-3">
+          <div className="flex items-center gap-6">
             <div
-              className={`p-2 rounded-lg transition-all duration-300 ${
-                mode === "tap2music"
-                  ? "bg-indigo-500 shadow-lg shadow-indigo-500/40 rotate-12"
-                  : "bg-slate-700"
-              }`}
+              className="flex items-center gap-3 cursor-pointer group"
+              onClick={toggleMode}
             >
-              <PianoIcon className="w-5 h-5 text-white" />
-            </div>
-            <div className="flex flex-col">
-              <h1 className="text-xl font-black tracking-tighter leading-none flex items-center gap-2 group-hover:text-indigo-400 transition-colors">
-                Tap2Music
-                {mode === "tap2music" && (
-                  <Sparkles className="w-4 h-4 text-indigo-400 animate-pulse" />
-                )}
-              </h1>
-              <span
-                className={`text-[9px] font-bold tracking-[0.2em] uppercase transition-colors ${
-                  mode === "tap2music" ? "text-indigo-400" : "text-slate-500"
+              <div
+                className={`p-2 rounded-lg transition-all duration-300 ${
+                  mode === "tap2music"
+                    ? "bg-indigo-500 shadow-lg shadow-indigo-500/40 rotate-12"
+                    : "bg-slate-700"
                 }`}
               >
-                {mode === "tap2music" ? "AI INFERENCE ON" : "FREEPLAY MODE"}
-              </span>
+                <PianoIcon className="w-5 h-5 text-white" />
+              </div>
+              <div className="flex flex-col">
+                <h1 className="text-xl font-black tracking-tighter leading-none flex items-center gap-2 group-hover:text-indigo-400 transition-colors">
+                  Tap2Music
+                  {mode === "tap2music" && (
+                    <Sparkles className="w-4 h-4 text-indigo-400 animate-pulse" />
+                  )}
+                </h1>
+                <span
+                  className={`text-[9px] font-bold tracking-[0.2em] uppercase transition-colors ${
+                    mode === "tap2music" ? "text-indigo-400" : "text-slate-500"
+                  }`}
+                >
+                  {mode === "tap2music" ? "AI INFERENCE ON" : "FREEPLAY MODE"}
+                </span>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="flex items-center gap-2">
-          <div className="flex bg-slate-800/50 p-1 rounded-xl border border-white/5 mr-2">
+          <div className="flex items-center gap-2">
+            <div className="flex bg-slate-800/50 p-1 rounded-xl border border-white/5 mr-2">
+              <button
+                onClick={() => setMode("freeplay")}
+                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
+                  mode === "freeplay"
+                    ? "bg-slate-700 text-white shadow-sm"
+                    : "text-slate-500 hover:text-slate-300"
+                }`}
+              >
+                FREEPLAY
+              </button>
+              <button
+                onClick={() => setMode("tap2music")}
+                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1.5 ${
+                  mode === "tap2music"
+                    ? "bg-indigo-600 text-white shadow-sm"
+                    : "text-slate-500 hover:text-slate-300"
+                }`}
+              >
+                <Zap className="w-3 h-3" /> TAP2MUSIC
+              </button>
+            </div>
+
             <button
-              onClick={() => setMode("freeplay")}
-              className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
-                mode === "freeplay"
-                  ? "bg-slate-700 text-white shadow-sm"
-                  : "text-slate-500 hover:text-slate-300"
+              onClick={() => {
+                setIsMuted(!isMuted);
+                audioEngine.setMute(!isMuted);
+              }}
+              className={`p-2 rounded-xl transition-all ${
+                isMuted
+                  ? "bg-red-500/20 text-red-500"
+                  : "bg-slate-800/50 text-slate-300 hover:bg-slate-700"
               }`}
+              title={isMuted ? "Unmute" : "Mute"}
             >
-              FREEPLAY
+              {isMuted ? (
+                <VolumeX className="w-5 h-5" />
+              ) : (
+                <Volume2 className="w-5 h-5" />
+              )}
             </button>
+
             <button
-              onClick={() => setMode("tap2music")}
-              className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1.5 ${
-                mode === "tap2music"
-                  ? "bg-indigo-600 text-white shadow-sm"
-                  : "text-slate-500 hover:text-slate-300"
-              }`}
+              onClick={clear}
+              className="p-2 bg-slate-800/50 text-slate-300 hover:bg-slate-700 rounded-xl transition-all"
+              title="Clear Visualizer"
             >
-              <Zap className="w-3 h-3" /> TAP2MUSIC
+              <Trash2 className="w-5 h-5" />
+            </button>
+
+            <button
+              onClick={() => setShowSettings(!showSettings)}
+              className={`p-2 rounded-xl transition-all ${
+                showSettings
+                  ? "bg-indigo-600 text-white"
+                  : "bg-slate-800/50 text-slate-300 hover:bg-slate-700"
+              }`}
+              title="Settings"
+            >
+              <Settings className="w-5 h-5" />
             </button>
           </div>
-
-          <button
-            onClick={() => {
-              setIsMuted(!isMuted);
-              audioEngine.setMute(!isMuted);
-            }}
-            className={`p-2 rounded-xl transition-all ${
-              isMuted
-                ? "bg-red-500/20 text-red-500"
-                : "bg-slate-800/50 text-slate-300 hover:bg-slate-700"
-            }`}
-            title={isMuted ? "Unmute" : "Mute"}
-          >
-            {isMuted ? (
-              <VolumeX className="w-5 h-5" />
-            ) : (
-              <Volume2 className="w-5 h-5" />
-            )}
-          </button>
-
-          <button
-            onClick={clear}
-            className="p-2 bg-slate-800/50 text-slate-300 hover:bg-slate-700 rounded-xl transition-all"
-            title="Clear Visualizer"
-          >
-            <Trash2 className="w-5 h-5" />
-          </button>
-
-          <button
-            onClick={() => setShowSettings(!showSettings)}
-            className={`p-2 rounded-xl transition-all ${
-              showSettings
-                ? "bg-indigo-600 text-white"
-                : "bg-slate-800/50 text-slate-300 hover:bg-slate-700"
-            }`}
-            title="Settings"
-          >
-            <Settings className="w-5 h-5" />
-          </button>
         </div>
+        {/* AI Sub-modes Bar (Only visible in Tap2Music mode) */}
+        {mode === "tap2music" && (
+          <div className="px-6 py-2 bg-indigo-950/20 border-t border-white/5 flex items-center gap-4 animate-in slide-in-from-top-2 duration-300">
+            <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">
+              Inference Engine:
+            </span>
+            <div className="flex gap-1">
+              <button
+                onClick={() => setSubMode("uc")}
+                className={`flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold transition-all ${
+                  subMode === "uc"
+                    ? "bg-indigo-600 text-white"
+                    : "text-slate-400 hover:bg-white/5"
+                }`}
+              >
+                <UserCircle className="w-3 h-3" /> UC Mode
+              </button>
+              <button
+                onClick={() => setSubMode("hand")}
+                className={`flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold transition-all ${
+                  subMode === "hand"
+                    ? "bg-indigo-600 text-white"
+                    : "text-slate-400 hover:bg-white/5"
+                }`}
+              >
+                <Hand className="w-3 h-3" /> Hand Condition
+              </button>
+              <button
+                onClick={() => setSubMode("experimental")}
+                className={`flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold transition-all ${
+                  subMode === "experimental"
+                    ? "bg-indigo-600 text-white"
+                    : "text-slate-400 hover:bg-white/5"
+                }`}
+              >
+                <Layers className="w-3 h-3" /> Experimental
+              </button>
+              <div className="w-[1px] h-4 bg-white/10 mx-2" />
+              <button className="flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold text-slate-600 cursor-not-allowed italic">
+                Reserve...
+              </button>
+            </div>
+          </div>
+        )}
       </header>
 
       {/* Main View Area */}
@@ -312,6 +460,7 @@ const App: React.FC = () => {
           activeNotes={activeNotes}
           onNoteOn={noteOn}
           onNoteOff={noteOff}
+          showLabels={mode === "freeplay"}
         />
 
         {/* Settings Overlay */}
@@ -394,7 +543,7 @@ const App: React.FC = () => {
                 : "bg-slate-600"
             }`}
           />
-          {inputs.length > 0 ? "MIDI ACTIVE" : "MIDI DISCONNECTED"}
+          {inputs.length > 0 ? "MIDI AVAILABLE" : "MIDI DISCONNECTED"}
         </div>
       </div>
     </div>

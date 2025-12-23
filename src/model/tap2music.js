@@ -1,6 +1,3 @@
-export const BEAT_THRES = 0.4;
-export const DOWNBEAT_THRES = 0.5;
-
 (function (tf, my) {
   class TapConverter {
     constructor() {
@@ -10,7 +7,7 @@ export const DOWNBEAT_THRES = 0.5;
       // Performance state
       this.lastTime = null;
       this.lastDur = 0;
-      this.lastPitchIdx = null;
+      this.lastPitchIdx = 88;
       this.lastHidden = null;
     }
 
@@ -18,17 +15,20 @@ export const DOWNBEAT_THRES = 0.5;
       await this.dec.init();
 
       // Warm start
-      this.track(0, 64);
+      this.predict(0, 64);
       this.reset();
+      this.predict(88, 0); // First pad
     }
 
     reset() {
+      // console.debug("reset LSTM");
       if (this.lastHidden !== null) {
         this.lastHidden.dispose();
       }
       this.lastTime = null;
-      this.lastPitchIdx = null;
+      this.lastPitchIdx = 88;
       this.lastHidden = null;
+      this.predict(88, 0); // First pad
     }
 
     dispose() {
@@ -43,11 +43,11 @@ export const DOWNBEAT_THRES = 0.5;
         console.warn("TapConv cannot have duration less than zero");
       }
       this.lastDur = Math.max(noteoff_time - this.lastTime, 0);
-      console.debug("TapConv. last dur:", this.lastDur);
+      // console.debug("TapConv. last dur:", this.lastDur);
     }
 
-    nucleusSample(logits, p = 0.07) {
-      console.debug("Nucleus Sampling")
+    nucleusSample(logits, p = 0.15) {
+      // console.debug("Nucleus Sampling")
       return tf.tidy(() => {
         let probs = tf.softmax(logits).squeeze();
 
@@ -61,21 +61,53 @@ export const DOWNBEAT_THRES = 0.5;
         filtered = filtered.div(filtered.sum());
 
         const sampled = tf.multinomial(tf.log(filtered), 1).squeeze();
-        return indices.gather(sampled);
+        const ptTensor = indices.gather(sampled);
+
+        const pitchIdx = ptTensor.dataSync()[0];
+        ptTensor.dispose();
+        return pitchIdx;
       });
     }
 
-    track(time, velocity) {
+    choice(probs) {
+      const r = Math.random();
+      let acc = 0;
+      for (let i = 0; i < probs.length; i++) {
+        acc += probs[i];
+        if (r < acc) return i;
+      }
+      return probs.length - 1; // fallback
+    }
+
+    temperatureSample(logits, temperature = 1.0) {
+      // Convert tensor to array
+      const logitsArray = logits.dataSync(); // or logits.arraySync() if multidim
+
+      // 1. Mask out the mask token (109)
+      // logitsArray[109] = -1e9;
+
+      // 2. Apply temperature
+      const expLogits = logitsArray.map((l) => Math.exp(l / temperature));
+      const sumExp = expLogits.reduce((a, b) => a + b, 0);
+      const probs = expLogits.map((e) => e / sumExp);
+
+      // 3. Random choice based on probs
+      return this.choice(probs);
+    }
+
+    predict(time, velocity) {
       // Check inputs
+      const start = performance.now();
       velocity = velocity === undefined ? 64 : velocity;
-      let deltaTime = this.lastTime === null ? 1e6 : time - this.lastTime;
+      let deltaTime =
+        this.lastTime === null ? 0 : (time - this.lastTime) / 1000.0;
       let lastDur = Math.min(this.lastDur, deltaTime);
 
       if (deltaTime < 0) {
         console.log("Warning: Specified time is in the past");
         deltaTime = 0;
       }
-      if (this.lastPitchIdx < 0 || this.lastPitchIdx >= my.PIANO_NUM_KEYS) {
+      if (this.lastPitchIdx < 0 || this.lastPitchIdx >= my.PIANO_NUM_KEYS + 1) {
         throw new Error("Specified MIDI note is out of piano's range");
       }
 
@@ -84,7 +116,10 @@ export const DOWNBEAT_THRES = 0.5;
 
       // Run model
       const prevHidden = this.lastHidden;
-      const [pitchIdxTensor, hidden] = tf.tidy(() => {
+      if (this.lastPitchIdx === null) {
+        this.lastPitchIdx = 88; // start token
+      }
+      const [pitchIdx, hidden] = tf.tidy(() => {
         // Pitch within 88 classes
         let feat = tf.tensor(
           [[this.lastPitchIdx, log1pDeltaTime, log1pDur, velocity]],
@@ -93,21 +128,25 @@ export const DOWNBEAT_THRES = 0.5;
         );
         const [plgt, hi] = this.dec.forward(feat, prevHidden);
 
-        const pitchIdxTensor = this.nucleusSample(plgt);
+        const pitchIdx = this.temperatureSample(plgt);
 
-        return [pitchIdxTensor, hi];
+        return [pitchIdx, hi];
       });
 
-      const pitchIdx = pitchIdxTensor.dataSync()[0];
-      pitchIdxTensor.dispose();
-
       // Update state
+      const end = performance.now();
+      const inferTime = ((end - start) / 1000).toFixed(3);
       if (prevHidden !== null) prevHidden.dispose();
+      console.debug(
+        "Tap2Music:",
+        `🎶 ${pitchIdx + 21}`,
+        `⌚ ${inferTime}s`,
+      );
       this.lastPitchIdx = pitchIdx;
       this.lastTime = time;
       this.lastHidden = hidden;
       return pitchIdx + 21;
     }
   }
-  my.TapConverter = TapConverter;
+  my.UCTapConverter = TapConverter;
 })(window.tf, window.my);

@@ -20,7 +20,7 @@ window.my = window.my || {};
       //     "Loading weights manifest from",
       //     `${paramsDir}/tfjs/weights_manifest.json`
       //   );
-      console.debug("fetch weights manifest, path:", `weights_manifest.json`);
+      // console.debug("fetch weights manifest, path:", `weights_manifest.json`);
       // const BASE = import.meta.env.BASE_URL;
       const manifest = await fetch(`model/weights_manifest.json`);
       const manifestJson = await manifest.json();

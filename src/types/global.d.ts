@@ -5,7 +5,7 @@ declare global {
     interface Window {
         my?: {
             UCTap2Music?: any
-            TapConverter?: any
+            UCTapConverter?: any
             testUCTap?: (...args: any[]) => Promise<any>;
             [key: string]: any;
         };
