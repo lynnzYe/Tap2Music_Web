@@ -1,20 +1,11 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
-
-# Run and deploy your AI Studio app
-
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/drive/1AxM0WVgWI7LUEryLnk5BXOX4E9M2Duji
-
-## Run Locally
-
-**Prerequisites:**  Node.js
-
+# Readme
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
+2. Run the app:
    `npm run dev`
+
+## How to add new models?
+
+1. To add a model, modify `InferenceEngine.ts` for API update, `lstm.js` and `tap2music.js` for model implementation/test/wrapper.
+2. Then, update `App.tsx` to add new modes for selection. Remember to run test only once for each mode and dispose unused models. Prepare input accordingly at `engineRefcurrent.run()`

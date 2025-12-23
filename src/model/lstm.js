@@ -104,7 +104,7 @@ window.my = window.my || {};
     };
   }
 
-  class UCTap2Music extends Module {
+  class UCModel extends Module {
     /*
      * Check MidiBeatSS for python impl.
      * - python has much more hyperparameters. For simplicity did not include those as params.
@@ -209,7 +209,7 @@ window.my = window.my || {};
     const numBytesBefore = tf.memory().numBytes;
 
     // Create model
-    const decoder = new UCTap2Music();
+    const decoder = new UCModel();
     await decoder.init();
 
     // Fetch test case
@@ -267,6 +267,6 @@ window.my = window.my || {};
   }
   my.PIANO_NUM_KEYS = PIANO_NUM_KEYS;
   my.SEQ_LEN = SEQ_LEN;
-  my.UCTap2Music = UCTap2Music;
+  my.UCModel = UCModel;
   my.testUCTap = testUCTap;
 })(window.tf, window.my);

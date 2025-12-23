@@ -4,8 +4,8 @@ export { };
 declare global {
     interface Window {
         my?: {
-            UCTap2Music?: any
-            UCTapConverter?: any
+            UCModel?: any
+            UCTapEngine?: any
             testUCTap?: (...args: any[]) => Promise<any>;
             [key: string]: any;
         };

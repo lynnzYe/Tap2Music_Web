@@ -29,6 +29,8 @@ import {
   Hand,
 } from "lucide-react";
 import "./App.css";
+import { toast } from "sonner";
+import { Toaster } from "@/components/ui/sonner";
 
 type PlayMode = "freeplay" | "tap2music";
 
@@ -43,57 +45,38 @@ const App: React.FC = () => {
   const [mode, setMode] = useState<PlayMode>("freeplay");
   const [subMode, setSubMode] = useState<InferenceSubMode>("uc");
 
-  const [tapErr, setTapError] = useState(false);
-  const [tapStatus, setTapStatus] = useState("Initializing model...");
-  const [loadingModel, setLoadingModel] = useState(true);
+  const [tapStatus, setTapStatus] = useState("");
+  const [loadingModel, setLoadingModel] = useState(false);
 
-  const engineRef = React.useRef<BaseInferenceEngine | null>(null);
+  const engineRef = React.useRef<BaseInferenceEngine<any> | null>(null);
   const pressedComputerKeys = useRef<Set<string>>(new Set());
-
-  // Test Tap2Music Model
-  useEffect(() => {
-    async function initTap() {
-      if (!window.my || !window.my.testUCTap || !window.my.UCTapConverter) {
-        console.error("window or tap model undefined");
-        setTapError(true);
-        return;
-      }
-      setTapStatus("Running model self-test...");
-      try {
-        if (!window._midiTestRan) {
-          window._midiTestRan = true;
-          await window.my.testUCTap();
-          // Add more tests
-        }
-        setTapStatus("Ready!");
-        setTapError(false);
-        setLoadingModel(false);
-      } catch (e) {
-        console.error(e);
-        setTapStatus("Model self-test failed! This should not happen.");
-        setTapError(true);
-        setLoadingModel(false);
-      }
-    }
-    initTap();
-  }, []);
 
   useEffect(() => {
     async function switchTapModel() {
+      // Release old engine
+      engineRef.current?.dispose();
       if (mode === "tap2music") {
-        // Release old engine
-        if (engineRef.current) engineRef.current.dispose();
-        // Create new engine
-        engineRef.current = InferenceFactory.create(subMode);
-        await engineRef.current.load();
-        // TODO: check and fix memory leakage tensorflow.
-      } else {
-        if (engineRef.current) {
-          engineRef.current.dispose();
-          engineRef.current = null;
+        const newEngine = InferenceFactory.create(subMode);
+        engineRef.current = newEngine;
+        setLoadingModel(true);
+        try {
+          setTapStatus(`Loading model: ${subMode}`);
+          // Run lazy self-test
+          await newEngine.selfTest();
+          await newEngine.load();
+          setTapStatus("Ready!");
+        } catch (e) {
+          console.error(e);
+          toast.error("UC model self-test failed");
+          setTapStatus("Model Test failed!");
         }
+        setLoadingModel(false);
+      } else {
+        engineRef.current = null;
+        setLoadingModel(false);
       }
     }
+
     switchTapModel();
   }, [mode, subMode]);
 
@@ -166,8 +149,14 @@ const App: React.FC = () => {
       let triggeredPitch = inputPitch;
 
       if (mode === "tap2music" && engineRef.current) {
-        const now = performance.now();
-        triggeredPitch = engineRef.current.predict(now, velocity);
+        // Handle Predict by mode. Remember to prepare input
+        const input = {
+          pitch: inputPitch,
+          now: performance.now(),
+          velocity: velocity,
+          chord: null,
+        };
+        triggeredPitch = engineRef.current.run(input);
       }
 
       // Save mapping and trigger note
@@ -289,20 +278,6 @@ const App: React.FC = () => {
     }, 5000);
     return () => clearInterval(interval);
   }, []);
-
-  if (loadingModel)
-    return (
-      <div className="loading-screen">
-        <div className="spinner"></div>
-        <p>{tapStatus}</p>
-      </div>
-    );
-  if (tapErr)
-    return (
-      <div className="error-screen">
-        <h2>⚠️ Initialization failed</h2>
-      </div>
-    );
 
   return (
     <div className="h-screen w-screen flex flex-col bg-slate-950 text-white overflow-hidden select-none">
@@ -532,6 +507,17 @@ const App: React.FC = () => {
           </div>
         )}
       </main>
+
+      {/* Loading overlay */}
+      {loadingModel && (
+        <div className="absolute inset-0 flex flex-col justify-center items-center bg-black/50 z-50">
+          <div className="spinner"></div>
+          <p>{tapStatus}</p>
+        </div>
+      )}
+
+      {/* toast */}
+      <Toaster position="top-right" richColors closeButton duration={5000} />
 
       {/* Connection Indicator */}
       <div className="fixed bottom-36 left-6 z-50 pointer-events-none">
