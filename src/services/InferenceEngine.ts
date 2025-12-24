@@ -1,12 +1,15 @@
+
+import { UserCircle, Hand, Layers } from "lucide-react";
+
 type UCPredictInput = {
   time: number
   velocity?: number | null
 };
 
 type HandRangePredictInput = {
-  kind: "text";
-  text: string;
-  maxLen?: number;
+  time: number
+  velocity?: number | null
+  hand?: number | null
 };
 
 type RawTapContext = {
@@ -65,8 +68,8 @@ class UCInferenceEngine extends BaseInferenceEngine<UCPredictInput> {
 
   constructor() {
     super();
-    if (!window.my?.UCTapEngine) throw new Error("Not loaded");
-    this.tapper = new window.my.UCTapEngine();
+    if (!window.my?.UCTapWrapper) throw new Error("Not loaded");
+    this.tapper = new window.my.UCTapWrapper();
   }
 
   async selfTest() {
@@ -96,19 +99,70 @@ class UCInferenceEngine extends BaseInferenceEngine<UCPredictInput> {
   }
 }
 
-const engineMap = {
-  uc: () => new UCInferenceEngine(),
-  // hand: () => new HandConditionEngine(),
-  hand: null,
-  experimental: null,
-  dummy: null
+class HandInferenceEngine extends BaseInferenceEngine<UCPredictInput> {
+  readonly kind = 'hand';
+
+  constructor() {
+    super();
+    if (!window.my?.UCTapWrapper) throw new Error("Not loaded");
+    this.tapper = new window.my.UCTapWrapper();
+  }
+
+  async selfTest() {
+    if (window.my?.testUCTap && !modelTestStatus.uc) {
+      await window.my.testUCTap();
+      modelTestStatus.uc = true;
+      console.debug("UC model self-test passed");
+    }
+  }
+
+  protected initInference() {
+    this.predict(this.prepareInput({ now: 0, velocity: 0 }))
+  }
+
+  protected prepareInput(ctx: RawTapContext): UCPredictInput {
+    return {
+      time: ctx.now,
+      velocity:
+        ctx.velocity == null
+          ? Math.floor(Math.random() * 41) + 60
+          : ctx.velocity
+    };
+  }
+
+  protected predict(input: UCPredictInput): number {
+    return this.tapper.predict(input);
+  }
+}
+
+export const engineMap = {
+  uc: {
+    factory: () => new UCInferenceEngine(),
+    label: "UC Mode",
+    icon: UserCircle,
+  },
+  hand: {
+    factory: () => new HandInferenceEngine(),
+    label: "Hand Condition",
+    icon: Hand,
+  },
+  experimental: {
+    factory: null,
+    label: "Experimental",
+    icon: Layers,
+  },
+  dummy: {
+    factory: null,
+    label: "Dummy",
+    icon: Layers,
+  },
 } as const;
 
 export type InferenceSubMode = keyof typeof engineMap;
 
 export class InferenceFactory {
   static create(mode: InferenceSubMode) {
-    const factory = engineMap[mode];
+    const factory = engineMap[mode].factory;
     return factory ? factory() : null;
   }
 }

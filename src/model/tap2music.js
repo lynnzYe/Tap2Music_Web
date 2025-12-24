@@ -47,12 +47,12 @@ function temperatureSample(logits, temperature = 1.0) {
   return choice(probs);
 }
 
-class BaseTapEngine {
+class BaseTapWrapper {
   constructor() {
-    if (new.target === BaseTapEngine) {
+    if (new.target === BaseTapWrapper) {
       throw new Error("Cannot instantiate abstract class BaseTapEngine");
     }
-    if (this.predict === BaseTapEngine.prototype.predict) {
+    if (this.predict === BaseTapWrapper.prototype.predict) {
       throw new Error("Subclasses must implement predict()");
     }
     this.dec = null;
@@ -97,19 +97,16 @@ class BaseTapEngine {
   }
 }
 
-class UCTapEngine extends BaseTapEngine {
+class UCTapWrapper extends BaseTapWrapper {
   constructor() {
     super();
     // Model
     this.dec = new my.UCModel();
   }
 
-  predict({ time, velocity = null }) {
+  predict({ time, velocity = 64 }) {
     // Check inputs
-    if (velocity === null) {
-    }
     const start = performance.now();
-    velocity = velocity === undefined ? 64 : velocity;
     let deltaTime =
       this.lastTime === null ? 0 : (time - this.lastTime) / 1000.0;
     let lastDur = Math.min(this.lastDur, deltaTime);
@@ -156,6 +153,63 @@ class UCTapEngine extends BaseTapEngine {
   }
 }
 
+class HandTapWrapper extends BaseTapWrapper {
+  constructor() {
+    super();
+    // Model
+    this.dec = new my.HandModel();
+  }
+
+  predict({ time, velocity = 64, hand = 1 }) {
+    // Check inputs
+    const start = performance.now();
+    let deltaTime =
+      this.lastTime === null ? 0 : (time - this.lastTime) / 1000.0;
+    let lastDur = Math.min(this.lastDur, deltaTime);
+
+    if (deltaTime < 0) {
+      console.log("Warning: Specified time is in the past");
+      deltaTime = 0;
+    }
+    if (this.lastPitchIdx < 0 || this.lastPitchIdx >= my.PIANO_NUM_KEYS + 1) {
+      throw new Error("Specified MIDI note is out of piano's range");
+    }
+
+    const log1pDeltaTime = Math.log1p(deltaTime);
+    const log1pDur = Math.log1p(lastDur);
+
+    // Run model
+    const prevHidden = this.lastHidden;
+    if (this.lastPitchIdx === null) {
+      this.lastPitchIdx = 88; // start token
+    }
+    const [pitchIdx, hidden] = tf.tidy(() => {
+      // Pitch within 88 classes
+      let feat = tf.tensor(
+        [[this.lastPitchIdx, log1pDeltaTime, log1pDur, velocity, hand]],
+        [1, 5],
+        "float32"
+      );
+      const [plgt, hi] = this.dec.forward(feat, prevHidden);
+
+      const pitchIdx = temperatureSample(plgt);
+
+      return [pitchIdx, hi];
+    });
+
+    // Update state
+    const end = performance.now();
+    const inferTime = ((end - start) / 1000).toFixed(3);
+    if (prevHidden !== null) prevHidden.dispose();
+    console.debug("Tap2Music:", `🎶 ${pitchIdx + 21}`, `⌚ ${inferTime}s`);
+    this.lastPitchIdx = pitchIdx;
+    this.lastTime = time;
+    this.lastHidden = hidden;
+    return pitchIdx + 21;
+  }
+}
+
 (function (tf, my) {
-  my.UCTapEngine = UCTapEngine;
+  my.UCTapWrapper = UCTapWrapper;
+  my.HandTapWrapper = HandTapWrapper;
 })(window.tf, window.my);

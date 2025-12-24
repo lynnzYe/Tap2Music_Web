@@ -5,7 +5,8 @@ window.my = window.my || {};
 (function (tf, my) {
   const PIANO_NUM_KEYS = 88;
   const testThres = 0.03;
-  const UCTap_CKPT_DIR = `/public/model`;
+  const UC_CKPT_DIR = `ucmodel`;
+  const Hand_CKPT_DIR = `handmodel`;
   const SEQ_LEN = 128;
 
   class Module {
@@ -16,16 +17,9 @@ window.my = window.my || {};
     async init(paramsDir) {
       // Load parameters
       this.dispose();
-      //   console.log(
-      //     "Loading weights manifest from",
-      //     `${paramsDir}/tfjs/weights_manifest.json`
-      //   );
-      // console.debug("fetch weights manifest, path:", `weights_manifest.json`);
-      // const BASE = import.meta.env.BASE_URL;
-      const manifest = await fetch(`model/weights_manifest.json`);
+      const manifest = await fetch(`${paramsDir}/weights_manifest.json`);
       const manifestJson = await manifest.json();
-      this._params = await tf.io.loadWeights(manifestJson, "model");
-      //   console.log("Load finished");
+      this._params = await tf.io.loadWeights(manifestJson, `${paramsDir}`);
     }
 
     dispose() {
@@ -103,10 +97,19 @@ window.my = window.my || {};
       return [newC, newH];
     };
   }
+  function gelu(x) {
+    const c = tf.scalar(Math.sqrt(2 / Math.PI));
+    return tf.mul(
+      0.5,
+      tf.mul(
+        x,
+        tf.add(1, tf.tanh(tf.mul(c, tf.add(x, tf.mul(0.044715, tf.pow(x, 3))))))
+      )
+    );
+  }
 
   class UCModel extends Module {
     /*
-     * Check MidiBeatSS for python impl.
      * - python has much more hyperparameters. For simplicity did not include those as params.
      * - you'll need to manually modify the code if you want to load a different model.
      */
@@ -120,7 +123,7 @@ window.my = window.my || {};
     }
 
     async init(paramsDir) {
-      await super.init(paramsDir === undefined ? UCTap_CKPT_DIR : paramsDir);
+      await super.init(paramsDir === undefined ? UC_CKPT_DIR : paramsDir);
 
       // Create LSTM cell closures
       this._cells = [];
@@ -204,6 +207,177 @@ window.my = window.my || {};
       });
     }
   }
+
+  class HandModel {
+    constructor({
+      handEmbDim = 32,
+      filmHiddenDim = 128,
+      numHands = 2,
+      multiLayerFilm = True,
+    } = {}) {
+      super();
+
+      this.handEmbDim = handEmbDim;
+      this.filmHiddenDim = filmHiddenDim;
+      this.numHands = numHands;
+      this.multiLayerFilm = multiLayerFilm;
+    }
+
+    async init(paramsDir) {
+      await super.init(paramsDir === undefined ? UC_CKPT_DIR : paramsDir);
+
+      // Create LSTM cell closures
+      this._cells = [];
+      for (let l = 0; l < this.rnnNumLayers; ++l) {
+        const wih = this._params[`model.uc_core.lstm.weight_ih_l${l}`];
+        if (!wih) {
+          throw new Error(`Missing LSTM weights for layer ${l}`);
+        }
+
+        this._cells.push(
+          pyTorchLSTMCellFactory(
+            this._params[`model.uc_core.lstm.weight_ih_l${l}`],
+            this._params[`model.uc_core.lstm.weight_hh_l${l}`],
+            this._params[`model.uc_core.lstm.bias_ih_l${l}`],
+            this._params[`model.uc_core.lstm.bias_hh_l${l}`]
+          )
+        );
+      }
+    }
+
+    initHidden(batchSize) {
+      // NOTE: This allocates memory that must later be freed
+      const c = [];
+      const h = [];
+      for (let i = 0; i < this.rnnNumLayers; ++i) {
+        c.push(tf.zeros([batchSize, this.rnnDim], "float32"));
+        h.push(tf.zeros([batchSize, this.rnnDim], "float32"));
+      }
+      return new LSTMHiddenState(c, h);
+    }
+
+    forward(feat, hx = null) {
+      return tf.tidy(() => {
+        // feat: (B,5) [pitch, dt, dur, vel, hand]
+        if (hx === null) hx = this.initHidden(feat.shape[0]);
+
+        // --- Split input ---
+        const pitchIdx = feat.gather([0], 1).reshape([-1]).toInt();
+        const dt = feat.gather([1], 1);
+        const dur = feat.gather([2], 1);
+        const vel = feat.gather([3], 1);
+        const handIdx = feat.gather([4], 1).reshape([-1]).toInt();
+
+        // --- Pitch embedding ---
+        const pitchEmb = tf.gather(
+          this._params["model.uc_core.pitch_emb.weight"],
+          pitchIdx
+        );
+
+        // --- Hand embedding ---
+        const handEmb = tf.gather(
+          this._params["model.hand_emb.weight"],
+          handIdx
+        ); // (B, handEmbDim)
+
+        // --- Input concat ---
+        let x = tf.concat([pitchEmb, dt, dur, vel], 1);
+
+        // --- Input projection ---
+        x = tf.add(
+          tf.matMul(
+            x,
+            this._params["model.uc_core.input_linear.weight"],
+            false,
+            true
+          ),
+          this._params["model.uc_core.input_linear.bias"]
+        ); // (B, hidden)
+
+        // --- Optional input FiLM ---
+        if (this.multiLayerFilm) {
+          let z = tf.add(
+            tf.matMul(
+              handEmb,
+              this._params["model.input_film_mlp.0.weight"],
+              false,
+              true
+            ),
+            this._params["model.input_film_mlp.0.bias"]
+          );
+          z = gelu(z);
+
+          z = tf.add(
+            tf.matMul(
+              z,
+              this._params["model.input_film_mlp.2.weight"],
+              false,
+              true
+            ),
+            this._params["model.input_film_mlp.2.bias"]
+          );
+
+          const [gammaIn, betaIn] = tf.split(z, 2, 1);
+          x = tf.add(tf.mul(gammaIn, x), betaIn);
+        }
+
+        // --- LSTM ---
+        let c = hx.c.slice();
+        let h = hx.h.slice();
+
+        for (let l = 0; l < this.rnnNumLayers; ++l) {
+          [c[l], h[l]] = this._cells[l](x, c[l], h[l]);
+          x = h[l];
+        }
+
+        // --- FiLM (output) ---
+        let f = tf.add(
+          tf.matMul(
+            handEmb,
+            this._params["model.film_mlp.0.weight"],
+            false,
+            true
+          ),
+          this._params["model.film_mlp.0.bias"]
+        );
+        f = gelu(f);
+
+        f = tf.add(
+          tf.matMul(f, this._params["model.film_mlp.3.weight"], false, true),
+          this._params["model.film_mlp.3.bias"]
+        );
+        f = gelu(f);
+
+        f = tf.add(
+          tf.matMul(f, this._params["model.film_mlp.5.weight"], false, true),
+          this._params["model.film_mlp.5.bias"]
+        );
+
+        const [gamma, beta] = tf.split(f, 2, 1);
+        const xCond = tf.add(tf.mul(gamma, x), beta);
+
+        // --- Output head ---
+        let y = tf.add(
+          tf.matMul(
+            xCond,
+            this._params["model.out_head.0.weight"],
+            false,
+            true
+          ),
+          this._params["model.out_head.0.bias"]
+        );
+        y = tf.relu(y);
+
+        y = tf.add(
+          tf.matMul(y, this._params["model.out_head.3.weight"], false, true),
+          this._params["model.out_head.3.bias"]
+        );
+
+        return [y, new LSTMHiddenState(c, h)];
+      });
+    }
+  }
+
   async function testUCTap() {
     console.log("Start UC Tap test");
     const numBytesBefore = tf.memory().numBytes;
@@ -213,7 +387,7 @@ window.my = window.my || {};
     await decoder.init();
 
     // Fetch test case
-    const t = await fetch(`test.json`).then((r) => r.json());
+    const t = await fetch(`${UC_CKPT_DIR}/test.json`).then((r) => r.json());
 
     // Run test
     let totalErr = 0;
@@ -265,8 +439,73 @@ window.my = window.my || {};
     }
     console.log("Passed decoder test with total err=", totalErr);
   }
+
+  async function testHand() {
+    console.log("Start Hand model test");
+    const numBytesBefore = tf.memory().numBytes;
+
+    // Create model
+    const decoder = new HandModel();
+    await decoder.init();
+
+    // Fetch test case
+    const t = await fetch(`${Hand_CKPT_DIR}/test.json`).then((r) => r.json());
+
+    // Run test
+    let totalErr = 0;
+    let him1 = null;
+    for (let i = 0; i < 128; ++i) {
+      him1 = tf.tidy(() => {
+        const row = t.feats[i];
+        const feats = tf.tensor(
+          [[row[0], row[1], row[2], row[3], row[4]]],
+          [1, 5],
+          "float32"
+        );
+        const [pitch_logits, hi] = decoder.forward(feats, him1);
+
+        const expectedLogits = tf.tensor(
+          [t["pitch_logits"][i]], // wrap in batch dim
+          [1, 89],
+          "float32"
+        );
+
+        const err = tf
+          .sum(tf.abs(tf.sub(pitch_logits, expectedLogits)))
+          .arraySync();
+        totalErr += err;
+
+        if (him1 !== null) him1.dispose();
+        return hi;
+      });
+    }
+
+    // Check equivalence to expected outputs
+    if (isNaN(totalErr) || totalErr > testThres) {
+      // was 0.015
+      console.log("Test failed with error=", totalErr);
+      throw new Error("Failed test");
+    } else if (totalErr > 0.015) {
+      console.log("Warning: total decoder error is", totalErr);
+    }
+
+    // Check for memory leaks
+    him1.dispose();
+    decoder.dispose();
+    if (tf.memory().numBytes !== numBytesBefore) {
+      console.warn(
+        "Memory difference found:",
+        tf.memory().numBytes - numBytesBefore
+      );
+      //   throw "Memory leak";
+    }
+    console.log("Passed decoder test with total err=", totalErr);
+  }
+
   my.PIANO_NUM_KEYS = PIANO_NUM_KEYS;
   my.SEQ_LEN = SEQ_LEN;
   my.UCModel = UCModel;
+  my.HandModel = HandModel;
   my.testUCTap = testUCTap;
+  my.testHand = testHand;
 })(window.tf, window.my);

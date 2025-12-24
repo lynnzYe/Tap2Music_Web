@@ -5,6 +5,7 @@ import { audioEngine } from "./src/services/AudioEngine";
 import { midiManager } from "./src/services/MidiManager";
 import {
   BaseInferenceEngine,
+  engineMap,
   InferenceFactory,
   InferenceSubMode,
 } from "./src/services/InferenceEngine";
@@ -279,6 +280,13 @@ const App: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
+  const availableSubModes = (
+    Object.entries(engineMap) as [
+      InferenceSubMode,
+      (typeof engineMap)[InferenceSubMode]
+    ][]
+  ).filter(([, v]) => v.factory !== null);
+
   return (
     <div className="h-screen w-screen flex flex-col bg-slate-950 text-white overflow-hidden select-none">
       {/* Header Controls */}
@@ -386,38 +394,28 @@ const App: React.FC = () => {
             <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">
               Inference Engine:
             </span>
+
             <div className="flex gap-1">
-              <button
-                onClick={() => setSubMode("uc")}
-                className={`flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold transition-all ${
-                  subMode === "uc"
-                    ? "bg-indigo-600 text-white"
-                    : "text-slate-400 hover:bg-white/5"
-                }`}
-              >
-                <UserCircle className="w-3 h-3" /> UC Mode
-              </button>
-              <button
-                onClick={() => setSubMode("hand")}
-                className={`flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold transition-all ${
-                  subMode === "hand"
-                    ? "bg-indigo-600 text-white"
-                    : "text-slate-400 hover:bg-white/5"
-                }`}
-              >
-                <Hand className="w-3 h-3" /> Hand Condition
-              </button>
-              <button
-                onClick={() => setSubMode("experimental")}
-                className={`flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold transition-all ${
-                  subMode === "experimental"
-                    ? "bg-indigo-600 text-white"
-                    : "text-slate-400 hover:bg-white/5"
-                }`}
-              >
-                <Layers className="w-3 h-3" /> Experimental
-              </button>
+              {availableSubModes.map(([key, cfg]) => {
+                const Icon = cfg.icon;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => setSubMode(key)}
+                    className={`flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold transition-all ${
+                      subMode === key
+                        ? "bg-indigo-600 text-white"
+                        : "text-slate-400 hover:bg-white/5"
+                    }`}
+                  >
+                    <Icon className="w-3 h-3" />
+                    {cfg.label}
+                  </button>
+                );
+              })}
+
               <div className="w-[1px] h-4 bg-white/10 mx-2" />
+
               <button className="flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold text-slate-600 cursor-not-allowed italic">
                 Reserve...
               </button>
