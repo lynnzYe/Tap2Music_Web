@@ -1,3 +1,5 @@
+This repo is based on Chris's wonderful [music cocreation tutorial](https://github.com/chrisdonahue/music-cocreation-tutorial/tree/main)!
+
 # Readme
 
 1. Install dependencies:
