@@ -1,4 +1,4 @@
-function nucleusSample(logits, p = 0.15) {
+function nucleusSample(logits, p = 0.7) {
   // console.debug("Nucleus Sampling")
   return tf.tidy(() => {
     let probs = tf.softmax(logits).squeeze();
@@ -192,7 +192,7 @@ class HandTapWrapper extends BaseTapWrapper {
       );
       const [plgt, hi] = this.dec.forward(feat, prevHidden);
 
-      const pitchIdx = temperatureSample(plgt);
+      const pitchIdx = nucleusSample(plgt);
 
       return [pitchIdx, hi];
     });

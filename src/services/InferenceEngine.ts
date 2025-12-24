@@ -125,13 +125,17 @@ class HandInferenceEngine extends BaseInferenceEngine<HandPredictInput> {
     this.predict(this.prepareInput({ now: 0, velocity: 0 }))
   }
 
-  protected prepareInput(ctx: RawTapContext): UCPredictInput {
+  protected prepareInput(ctx: RawTapContext): HandPredictInput {
+    // Hand: default right(1), boundary: {6 U H N} -> all produce note >= MIDI_65
+    const hand = ctx.pitch === null ? 1 : (ctx.pitch >= 65 ? 1 : 0)
+    console.debug("Hand: input hand is", hand)
     return {
       time: ctx.now,
       velocity:
         ctx.velocity == null
           ? Math.floor(Math.random() * 41) + 60
-          : ctx.velocity
+          : ctx.velocity,
+      hand: hand
     };
   }
 
