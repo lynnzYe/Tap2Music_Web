@@ -6,6 +6,7 @@ import { midiManager } from "./src/services/MidiManager";
 import {
   BaseInferenceEngine,
   engineMap,
+  InferenceConfig,
   InferenceFactory,
   InferenceSubMode,
 } from "./src/services/InferenceEngine";
@@ -25,9 +26,7 @@ import {
   Piano as PianoIcon,
   Sparkles,
   Zap,
-  Layers,
-  UserCircle,
-  Hand,
+  Sliders,
 } from "lucide-react";
 import "./App.css";
 import { toast } from "sonner";
@@ -45,6 +44,14 @@ const App: React.FC = () => {
   const [outputs, setOutputs] = useState<any[]>([]);
   const [mode, setMode] = useState<PlayMode>("freeplay");
   const [subMode, setSubMode] = useState<InferenceSubMode>("uc");
+
+  const [showInferenceParams, setShowInferenceParams] = useState(false);
+  // Inference Config State
+  const [infConfig, setInfConfig] = useState<InferenceConfig>({
+    samplingType: "temperature",
+    temperature: 0.8,
+    topP: 0.85,
+  });
 
   const [tapStatus, setTapStatus] = useState("");
   const [loadingModel, setLoadingModel] = useState(false);
@@ -80,6 +87,12 @@ const App: React.FC = () => {
 
     switchTapModel();
   }, [mode, subMode]);
+
+  useEffect(() => {
+    if (engineRef.current) {
+      engineRef.current.updateConfig(infConfig);
+    }
+  }, [infConfig]);
 
   // Keep a ref to events for performance
   const noteEventsRef = useRef<NoteEvent[]>([]);
@@ -390,36 +403,51 @@ const App: React.FC = () => {
         </div>
         {/* AI Sub-modes Bar (Only visible in Tap2Music mode) */}
         {mode === "tap2music" && (
-          <div className="px-6 py-2 bg-indigo-950/20 border-t border-white/5 flex items-center gap-4 animate-in slide-in-from-top-2 duration-300">
-            <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">
-              Inference Engine:
-            </span>
+          <div className="px-6 py-2 bg-indigo-950/20 border-t border-white/5 flex items-center justify-between animate-in fade-in duration-300">
+            <div className="flex items-center gap-4">
+              <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">
+                Inference Engine:
+              </span>
 
-            <div className="flex gap-1">
-              {availableSubModes.map(([key, cfg]) => {
-                const Icon = cfg.icon;
-                return (
-                  <button
-                    key={key}
-                    onClick={() => setSubMode(key)}
-                    className={`flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold transition-all ${
-                      subMode === key
-                        ? "bg-indigo-600 text-white"
-                        : "text-slate-400 hover:bg-white/5"
-                    }`}
-                  >
-                    <Icon className="w-3 h-3" />
-                    {cfg.label}
-                  </button>
-                );
-              })}
+              <div className="flex gap-1">
+                {availableSubModes.map(([key, cfg]) => {
+                  const Icon = cfg.icon;
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => setSubMode(key)}
+                      className={`flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold transition-all ${
+                        subMode === key
+                          ? "bg-indigo-600 text-white"
+                          : "text-slate-400 hover:bg-white/5"
+                      }`}
+                    >
+                      <Icon className="w-3 h-3" />
+                      {cfg.label}
+                    </button>
+                  );
+                })}
 
-              <div className="w-[1px] h-4 bg-white/10 mx-2" />
+                <div className="w-[1px] h-4 bg-white/10 mx-2" />
 
-              <button className="flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold text-slate-600 cursor-not-allowed italic">
-                Reserve...
-              </button>
+                <button className="flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold text-slate-600 cursor-not-allowed italic">
+                  More to come...
+                </button>
+              </div>
             </div>
+            <button
+              onClick={() => {
+                setShowInferenceParams(!showInferenceParams);
+                setShowSettings(false);
+              }}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-[11px] uppercase font-black tracking-tighter transition-all ${
+                showInferenceParams
+                  ? "bg-indigo-500 text-white"
+                  : "bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20"
+              }`}
+            >
+              <Sliders className="w-3.5 h-3.5" /> Engine Parameters
+            </button>
           </div>
         )}
       </header>
@@ -504,18 +532,133 @@ const App: React.FC = () => {
             </div>
           </div>
         )}
+        {/* Inference Parameter Overlay */}
+        {showInferenceParams && mode === "tap2music" && (
+          <div className="absolute top-4 right-6 w-80 bg-indigo-950/40 backdrop-blur-2xl border border-indigo-500/20 rounded-2xl p-6 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-200">
+            <h2 className="text-xs font-bold uppercase tracking-widest text-indigo-400 mb-6 flex items-center gap-2">
+              <Zap className="w-3.5 h-3.5" /> {subMode.toUpperCase()} Parameters
+            </h2>
+
+            <div className="space-y-6">
+              <div>
+                <label className="block text-[10px] font-bold text-indigo-300 mb-3 uppercase tracking-tighter">
+                  Sampling Strategy
+                </label>
+                <div className="grid grid-cols-2 gap-2 bg-black/20 p-1 rounded-xl">
+                  <button
+                    onClick={() =>
+                      setInfConfig((prev) => ({
+                        ...prev,
+                        samplingType: "temperature",
+                      }))
+                    }
+                    className={`py-1.5 rounded-lg text-[10px] font-bold transition-all ${
+                      infConfig.samplingType === "temperature"
+                        ? "bg-indigo-600 text-white"
+                        : "text-slate-500 hover:text-slate-300"
+                    }`}
+                  >
+                    Temperature
+                  </button>
+                  <button
+                    onClick={() =>
+                      setInfConfig((prev) => ({
+                        ...prev,
+                        samplingType: "nucleus",
+                      }))
+                    }
+                    className={`py-1.5 rounded-lg text-[10px] font-bold transition-all ${
+                      infConfig.samplingType === "nucleus"
+                        ? "bg-indigo-600 text-white"
+                        : "text-slate-500 hover:text-slate-300"
+                    }`}
+                  >
+                    Nucleus
+                  </button>
+                </div>
+              </div>
+
+              {infConfig.samplingType === "temperature" ? (
+                <div>
+                  <div className="flex justify-between items-center mb-2">
+                    <label className="text-[10px] font-bold text-indigo-300 uppercase tracking-tighter">
+                      Temperature
+                    </label>
+                    <span className="text-xs font-mono text-indigo-400">
+                      {infConfig.temperature.toFixed(2)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="2"
+                    step="0.05"
+                    value={infConfig.temperature}
+                    onChange={(e) =>
+                      setInfConfig((prev) => ({
+                        ...prev,
+                        temperature: parseFloat(e.target.value),
+                      }))
+                    }
+                    className="w-full h-1.5 bg-indigo-950 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                  />
+                  <div className="flex justify-between mt-1">
+                    <span className="text-[8px] text-slate-600">PRECISE</span>
+                    <span className="text-[8px] text-slate-600">CREATIVE</span>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div className="flex justify-between items-center mb-2">
+                    <label className="text-[10px] font-bold text-indigo-300 uppercase tracking-tighter">
+                      Nucleus Sampling (Top-P)
+                    </label>
+                    <span className="text-xs font-mono text-indigo-400">
+                      {infConfig.topP.toFixed(2)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={infConfig.topP}
+                    onChange={(e) =>
+                      setInfConfig((prev) => ({
+                        ...prev,
+                        topP: parseFloat(e.target.value),
+                      }))
+                    }
+                    className="w-full h-1.5 bg-indigo-950 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                  />
+                  <div className="flex justify-between mt-1">
+                    <span className="text-[8px] text-slate-600">NARROW</span>
+                    <span className="text-[8px] text-slate-600">BROAD</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="pt-4 border-t border-white/5">
+                <p className="text-[10px] text-indigo-300/60 leading-relaxed italic">
+                  These parameters control the randomness and focus of the model
+                  output during the inference phase.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Loading overlay */}
       {loadingModel && (
-        <div className="absolute inset-0 flex flex-col justify-center items-center bg-black/50 z-50">
+        <div className="absolute inset-0 flex flex-col justify-center items-center  z-50">
           <div className="spinner"></div>
           <p>{tapStatus}</p>
         </div>
       )}
 
       {/* toast */}
-      <Toaster position="top-right" richColors closeButton duration={5000} />
+      <Toaster position="top-right" richColors duration={5000} />
 
       {/* Connection Indicator */}
       <div className="fixed bottom-36 left-6 z-50 pointer-events-none">

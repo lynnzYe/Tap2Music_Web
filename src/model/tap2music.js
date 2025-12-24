@@ -104,7 +104,13 @@ class UCTapWrapper extends BaseTapWrapper {
     this.dec = new my.UCModel();
   }
 
-  predict({ time, velocity = 64 }) {
+  predict({
+    time,
+    velocity = 64,
+    samplingType = "temperature",
+    temperature = 1.1,
+    topP = 0.7,
+  }) {
     // Check inputs
     const start = performance.now();
     let deltaTime =
@@ -136,8 +142,14 @@ class UCTapWrapper extends BaseTapWrapper {
       );
       const [plgt, hi] = this.dec.forward(feat, prevHidden);
 
-      const pitchIdx = temperatureSample(plgt);
-
+      let pitchIdx = 88;
+      if (samplingType == "temperature") {
+        pitchIdx = temperatureSample(plgt, temperature);
+      } else if (samplingType == "nucleus") {
+        pitchIdx = nucleusSample(plgt, topP);
+      } else {
+        throw new Error("Unknown sampling type:", samplingType);
+      }
       return [pitchIdx, hi];
     });
 
@@ -160,7 +172,14 @@ class HandTapWrapper extends BaseTapWrapper {
     this.dec = new my.HandModel();
   }
 
-  predict({ time, velocity = 64, hand = 1 }) {
+  predict({
+    time,
+    velocity = 64,
+    hand = 1,
+    samplingType = "temperature",
+    temperature = 1.1,
+    topP = 0.7,
+  }) {
     // Check inputs
     const start = performance.now();
     let deltaTime =
@@ -192,7 +211,14 @@ class HandTapWrapper extends BaseTapWrapper {
       );
       const [plgt, hi] = this.dec.forward(feat, prevHidden);
 
-      const pitchIdx = nucleusSample(plgt);
+      let pitchIdx = 88;
+      if (samplingType == "temperature") {
+        pitchIdx = temperatureSample(plgt, temperature);
+      } else if (samplingType == "nucleus") {
+        pitchIdx = nucleusSample(plgt, topP);
+      } else {
+        throw new Error("Unknown sampling type:", samplingType);
+      }
 
       return [pitchIdx, hi];
     });

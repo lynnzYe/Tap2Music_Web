@@ -30,6 +30,14 @@ type InferenceInputMap = {
   // experimental: ExperimentalPredictInput;
 };
 
+export type SamplingType = 'temperature' | 'nucleus';
+
+export interface InferenceConfig {
+  samplingType: SamplingType;
+  temperature: number;
+  topP: number;
+}
+
 const modelTestStatus: Record<InferenceSubMode, boolean> = {
   uc: false,
   hand: false,
@@ -40,6 +48,11 @@ const modelTestStatus: Record<InferenceSubMode, boolean> = {
 export abstract class BaseInferenceEngine<TInput> {
   public tapper: any;
   abstract readonly kind: keyof InferenceInputMap;
+  protected config: InferenceConfig = {
+    samplingType: 'temperature',
+    temperature: 0.8,
+    topP: 0.85,
+  };
 
   // public API (uniform)
   run(ctx: RawTapContext): number {
@@ -62,10 +75,20 @@ export abstract class BaseInferenceEngine<TInput> {
     // Default: do nothing
   }
 
+  public updateConfig(config: Partial<InferenceConfig>) {
+    this.config = { ...this.config, ...config };
+    console.debug(`Engine config updated:`, this.config);
+  }
+
+  protected predict(input: TInput): number {
+    let inputWithConfig = { ...input, ...this.config }
+    console.debug("predict with input:", inputWithConfig)
+    return this.tapper.predict(inputWithConfig);
+  }
+
   // Internel methods to be implemented
   protected abstract initInference(): void; // PAD to mark Start of New Sequence
   protected abstract prepareInput(ctx: RawTapContext): TInput;
-  protected abstract predict(input: TInput): number;
 }
 
 class UCInferenceEngine extends BaseInferenceEngine<UCPredictInput> {
@@ -97,10 +120,6 @@ class UCInferenceEngine extends BaseInferenceEngine<UCPredictInput> {
           ? Math.floor(Math.random() * 41) + 60
           : ctx.velocity
     };
-  }
-
-  protected predict(input: UCPredictInput): number {
-    return this.tapper.predict(input);
   }
 }
 
@@ -137,10 +156,6 @@ class HandInferenceEngine extends BaseInferenceEngine<HandPredictInput> {
           : ctx.velocity,
       hand: hand
     };
-  }
-
-  protected predict(input: UCPredictInput): number {
-    return this.tapper.predict(input);
   }
 }
 
@@ -196,9 +211,11 @@ export const engineMap = {
 export type InferenceSubMode = keyof typeof engineMap;
 
 export class InferenceFactory {
-  static create(mode: InferenceSubMode) {
+  static create(mode: InferenceSubMode, initialConfig: InferenceConfig = { samplingType: 'temperature', temperature: 0.8, topP: 0.85 }) {
     const factory = engineMap[mode].factory;
-    return factory ? factory() : null;
+    let engine = factory ? factory() : null;
+    if (engine) engine.updateConfig(initialConfig);
+    return engine
   }
 }
 
