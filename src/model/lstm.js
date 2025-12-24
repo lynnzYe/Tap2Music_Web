@@ -98,14 +98,18 @@ window.my = window.my || {};
     };
   }
   function gelu(x) {
-    const c = tf.scalar(Math.sqrt(2 / Math.PI));
-    return tf.mul(
-      0.5,
-      tf.mul(
-        x,
-        tf.add(1, tf.tanh(tf.mul(c, tf.add(x, tf.mul(0.044715, tf.pow(x, 3))))))
-      )
-    );
+    return tf.tidy(() => {
+      const invSqrt2 = tf.scalar(1 / Math.sqrt(2), "float32");
+      const one = tf.scalar(1, "float32");
+      const half = tf.scalar(0.5, "float32");
+
+      // erf(x / sqrt(2))
+      const erfTerm = tf.erf(tf.mul(x, invSqrt2));
+      const result = tf.mul(half, tf.mul(x, tf.add(one, erfTerm)));
+
+      // tidy will dispose temporary scalars and tensors
+      return result;
+    });
   }
 
   class UCModel extends Module {
@@ -208,14 +212,19 @@ window.my = window.my || {};
     }
   }
 
-  class HandModel {
+  class HandModel extends Module {
     constructor({
       handEmbDim = 32,
       filmHiddenDim = 128,
       numHands = 2,
-      multiLayerFilm = True,
+      multiLayerFilm = true,
     } = {}) {
       super();
+      this.nPitches = PIANO_NUM_KEYS + 1;
+      this.pitchEmb = 32;
+      this.rnnDim = 128;
+      this.rnnNumLayers = 2;
+      this._cells = null;
 
       this.handEmbDim = handEmbDim;
       this.filmHiddenDim = filmHiddenDim;
@@ -224,7 +233,7 @@ window.my = window.my || {};
     }
 
     async init(paramsDir) {
-      await super.init(paramsDir === undefined ? UC_CKPT_DIR : paramsDir);
+      await super.init(paramsDir === undefined ? Hand_CKPT_DIR : paramsDir);
 
       // Create LSTM cell closures
       this._cells = [];

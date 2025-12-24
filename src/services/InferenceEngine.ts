@@ -1,17 +1,6 @@
 
 import { UserCircle, Hand, Layers } from "lucide-react";
 
-type UCPredictInput = {
-  time: number
-  velocity?: number | null
-};
-
-type HandRangePredictInput = {
-  time: number
-  velocity?: number | null
-  hand?: number | null
-};
-
 type RawTapContext = {
   now: number;
   pitch?: number | null; // currently performed MIDI pitch, used for range/hand condition
@@ -19,9 +8,25 @@ type RawTapContext = {
   chord?: number | null; // for chord-conditioned model, requires further logic to extract chords on the fly
 };
 
+type UCPredictInput = {
+  time: number
+  velocity?: number | null
+};
+
+type HandPredictInput = {
+  time: number
+  velocity?: number | null
+  hand?: number | null
+};
+
+type DummyInput = {
+  pitch?: number | null
+}
+
 type InferenceInputMap = {
   uc: UCPredictInput;
-  hand: HandRangePredictInput;
+  hand: HandPredictInput;
+  dummy: DummyInput;
   // experimental: ExperimentalPredictInput;
 };
 
@@ -99,20 +104,20 @@ class UCInferenceEngine extends BaseInferenceEngine<UCPredictInput> {
   }
 }
 
-class HandInferenceEngine extends BaseInferenceEngine<UCPredictInput> {
+class HandInferenceEngine extends BaseInferenceEngine<HandPredictInput> {
   readonly kind = 'hand';
 
   constructor() {
     super();
     if (!window.my?.UCTapWrapper) throw new Error("Not loaded");
-    this.tapper = new window.my.UCTapWrapper();
+    this.tapper = new window.my.HandTapWrapper();
   }
 
   async selfTest() {
-    if (window.my?.testUCTap && !modelTestStatus.uc) {
-      await window.my.testUCTap();
-      modelTestStatus.uc = true;
-      console.debug("UC model self-test passed");
+    if (window.my?.testHand && !modelTestStatus.hand) {
+      await window.my.testHand();
+      modelTestStatus.hand = true;
+      console.debug("Hand model self-test passed");
     }
   }
 
@@ -135,6 +140,32 @@ class HandInferenceEngine extends BaseInferenceEngine<UCPredictInput> {
   }
 }
 
+class DummyInferenceEngine extends BaseInferenceEngine<DummyInput> {
+  readonly kind = 'dummy';
+  constructor() {
+    super();
+  }
+  async load() { return }
+  async selfTest() { modelTestStatus.dummy = true; }
+  reset() { return }
+  updateNoteoff(noteoffTime: number) { return }
+  dispose() { return }
+
+  protected initInference() { return }
+
+  protected prepareInput(ctx: DummyInput): DummyInput {
+    return {
+      pitch: ctx.pitch === null
+        ? Math.floor(Math.random() * 88) + 21
+        : ctx.pitch
+    };
+  }
+
+  protected predict(input: DummyInput): number {
+    return input.pitch;
+  }
+}
+
 export const engineMap = {
   uc: {
     factory: () => new UCInferenceEngine(),
@@ -146,14 +177,14 @@ export const engineMap = {
     label: "Hand Condition",
     icon: Hand,
   },
+  dummy: {
+    factory: () => new DummyInferenceEngine(),
+    label: "Dummy",
+    icon: Layers,
+  },
   experimental: {
     factory: null,
     label: "Experimental",
-    icon: Layers,
-  },
-  dummy: {
-    factory: null,
-    label: "Dummy",
     icon: Layers,
   },
 } as const;
