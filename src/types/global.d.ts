@@ -4,9 +4,17 @@ export { };
 declare global {
     interface Window {
         my?: {
-            UCTap2Music?: any
-            TapConverter?: any
+            // Base LSTM models and tests
+            UCModel?: any
+            HandModel?: any
             testUCTap?: (...args: any[]) => Promise<any>;
+            testHand?: (...args: any[]) => Promise<any>;
+
+            // stateful LSTM wrappers 
+            UCTapWrapper?: any
+            HandTapWrapper?: any
+
+            // Any other
             [key: string]: any;
         };
         _midiTestRan?: boolean;

@@ -1,6 +1,6 @@
 
 import React, { useEffect, useRef } from 'react';
-import { NoteEvent, PIANO_CONFIG, getKeyLayout } from '../types';
+import { NoteEvent, PIANO_CONFIG, getKeyLayout } from '../src/types/types';
 
 interface VisualizerProps {
   noteEvents: NoteEvent[];
