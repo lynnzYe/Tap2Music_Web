@@ -156,7 +156,11 @@ const App: React.FC = () => {
 
   // Public API exposed for the model/input
   const noteOn = useCallback(
-    (inputPitch: number, velocity: number = 100) => {
+    (
+      inputPitch: number,
+      velocity: number = 100,
+      isGtInject: boolean = false,
+    ) => {
       // Only trigger if inputPitch is not already active
       if (pitchMap.current.has(inputPitch)) return;
 
@@ -169,8 +173,12 @@ const App: React.FC = () => {
           now: performance.now(),
           velocity: velocity,
           chord: null,
+          isGtInject: isGtInject,
         };
         triggeredPitch = engineRef.current.run(input);
+      }
+      if (isGtInject) {
+        triggeredPitch = inputPitch;
       }
 
       // Save mapping and trigger note

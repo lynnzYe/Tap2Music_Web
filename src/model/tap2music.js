@@ -105,8 +105,10 @@ class UCTapWrapper extends BaseTapWrapper {
   }
 
   predict({
+    pitch, // Placeholder for GtInject, usually not used
     time,
     velocity = 64,
+    isGtInject = false,
     samplingType = "temperature",
     temperature = 1.1,
     topP = 0.7,
@@ -158,7 +160,10 @@ class UCTapWrapper extends BaseTapWrapper {
     const inferTime = ((end - start) / 1000).toFixed(3);
     if (prevHidden !== null) prevHidden.dispose();
     console.debug("Tap2Music:", `🎶 ${pitchIdx + 21}`, `⌚ ${inferTime}s`);
-    this.lastPitchIdx = pitchIdx;
+
+    const finalPitchIdx = isGtInject ? pitch - 21 : pitchIdx;
+    console.debug("is inject:", isGtInject);
+    this.lastPitchIdx = finalPitchIdx;
     this.lastTime = time;
     this.lastHidden = hidden;
     return pitchIdx + 21;
@@ -176,6 +181,7 @@ class HandTapWrapper extends BaseTapWrapper {
     time,
     velocity = 64,
     hand = 1,
+    isGtInject = false,
     samplingType = "temperature",
     temperature = 1.1,
     topP = 0.7,
@@ -228,7 +234,9 @@ class HandTapWrapper extends BaseTapWrapper {
     const inferTime = ((end - start) / 1000).toFixed(3);
     if (prevHidden !== null) prevHidden.dispose();
     console.debug("Tap2Music:", `🎶 ${pitchIdx + 21}`, `⌚ ${inferTime}s`);
-    this.lastPitchIdx = pitchIdx;
+
+    const finalPitchIdx = isGtInject ? pitch - 21 : pitchIdx;
+    this.lastPitchIdx = finalPitchIdx;
     this.lastTime = time;
     this.lastHidden = hidden;
     return pitchIdx + 21;
@@ -304,6 +312,7 @@ class RTPTapWrapper extends BaseTapWrapper {
     time,
     velocity = 64,
     pitch, // MUST pass the actual tap pitch now (it doesn't have to be gt, just provide RTP information)
+    isGtInject = false,
     samplingType = "temperature", // Or can be refactored to take n-rank and time-rank features
     temperature = 1.1,
     topP = 0.7,
@@ -375,13 +384,19 @@ class RTPTapWrapper extends BaseTapWrapper {
       `| nR: ${nRank}, tR: ${timeRank}`,
     );
 
+    const finalPitchIdx = isGtInject ? pitch - 21 : pitchIdx;
+
     // 1. Store the PREDICTED pitch for the next step's network input
-    this.lastPitchIdx = pitchIdx;
+    this.lastPitchIdx = finalPitchIdx;
     this.lastTime = time;
     this.lastHidden = hidden;
 
     // 2. Store the TAP pitch in history for the next step's rank calculations
-    this.history.push({ pitch: pitch, time: time });
+    this.history.push({
+      pitch: isGtInject ? pitch : finalPitchIdx + 21,
+      time: time,
+    });
+    // console.debug("this history:", this.history);
     if (this.history.length > 10) {
       this.history.shift();
     }

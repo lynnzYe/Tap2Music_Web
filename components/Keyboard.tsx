@@ -1,9 +1,13 @@
 import React from "react";
-import { PIANO_CONFIG, getKeyLayout, FREEPLAY_KEY_MAP } from "../src/types/types";
+import {
+  PIANO_CONFIG,
+  getKeyLayout,
+  FREEPLAY_KEY_MAP,
+} from "../src/types/types";
 
 interface KeyboardProps {
   activeNotes: Set<number>;
-  onNoteOn: (pitch: number, velocity: number) => void;
+  onNoteOn: (pitch: number, velocity: number, isGtInject?: boolean) => void;
   onNoteOff: (pitch: number) => void;
   showLabels?: boolean;
 }
@@ -29,7 +33,7 @@ const Keyboard: React.FC<KeyboardProps> = ({
   };
 
   const handleMouseDown = (midi: number) => {
-    onNoteOn(midi, 100);
+    onNoteOn(midi, 100, true);
   };
 
   const handleMouseUp = (midi: number) => {
@@ -38,7 +42,7 @@ const Keyboard: React.FC<KeyboardProps> = ({
 
   const handleMouseEnter = (e: React.MouseEvent, midi: number) => {
     if (e.buttons === 1) {
-      onNoteOn(midi, 100);
+      onNoteOn(midi, 100, true);
     }
   };
 
@@ -67,8 +71,8 @@ const Keyboard: React.FC<KeyboardProps> = ({
                 ? "bg-indigo-500 shadow-[inset_0_-2px_0_rgba(255,255,255,0.4)]"
                 : "bg-indigo-100 shadow-[inset_0_-4px_0_rgba(99,102,241,0.5)]"
               : isBlack
-              ? "bg-neutral-900 shadow-[inset_0_-3px_0_rgba(0,0,0,0.8)]"
-              : "bg-white shadow-[inset_0_-4px_0_rgba(0,0,0,0.1)]"
+                ? "bg-neutral-900 shadow-[inset_0_-3px_0_rgba(0,0,0,0.8)]"
+                : "bg-white shadow-[inset_0_-4px_0_rgba(0,0,0,0.1)]"
           }
           transition-colors duration-75 border-b-2 border-slate-300
         `}

@@ -5,25 +5,32 @@ type RawTapContext = {
   now: number;
   pitch?: number | null; // currently performed MIDI pitch, used for range/hand condition
   velocity?: number | null;
+  isGtInject?: boolean
   chord?: number | null; // for chord-conditioned model, requires further logic to extract chords on the fly
 };
 
 type UCPredictInput = {
   time: number
+  pitch?: number | null // Usually not used unless with GtInject
   velocity?: number | null
+  isGtInject?: boolean
 };
 
-interface RTPPredictInput {
-  time: number;
-  velocity: number;
-  pitch: number;
-}
 
 type HandPredictInput = {
   time: number
+  pitch?: number | null // Usually not used unless with GtInject
   velocity?: number | null
   hand?: number | null
+  isGtInject?: boolean
 };
+
+type RTPPredictInput = {
+  pitch: number; // always used for RTP calculation. Also used when GtInject
+  time: number;
+  velocity: number;
+  isGtInject?: boolean
+}
 
 type DummyInput = {
   pitch?: number | null
@@ -31,7 +38,7 @@ type DummyInput = {
 
 type InferenceInputMap = {
   uc: UCPredictInput;
-  rtp: UCPredictInput;
+  rtp: RTPPredictInput;
   hand: HandPredictInput;
   dummy: DummyInput;
   // experimental: ExperimentalPredictInput;
@@ -122,11 +129,13 @@ class UCInferenceEngine extends BaseInferenceEngine<UCPredictInput> {
 
   protected prepareInput(ctx: RawTapContext): UCPredictInput {
     return {
+      pitch: ctx.pitch,
       time: ctx.now,
       velocity:
         ctx.velocity == null
           ? Math.floor(Math.random() * 41) + 60
-          : ctx.velocity
+          : ctx.velocity,
+      isGtInject: ctx.isGtInject
     };
   }
 }
@@ -157,12 +166,14 @@ class HandInferenceEngine extends BaseInferenceEngine<HandPredictInput> {
     const hand = ctx.pitch === null ? 1 : (ctx.pitch >= 65 ? 1 : 0)
     console.debug("Hand: input hand is", hand)
     return {
+      pitch: ctx.pitch,
       time: ctx.now,
       velocity:
         ctx.velocity == null
           ? Math.floor(Math.random() * 41) + 60
           : ctx.velocity,
-      hand: hand
+      hand: hand,
+      isGtInject: ctx.isGtInject
     };
   }
 }
@@ -202,7 +213,8 @@ class RTPInferenceEngine extends BaseInferenceEngine<RTPPredictInput> {
         ctx.velocity == null
           ? Math.floor(Math.random() * 41) + 60
           : ctx.velocity,
-      pitch: ctx.pitch // Pass the actual key tapped by the user
+      pitch: ctx.pitch, // Pass the actual key tapped by the user
+      isGtInject: ctx.isGtInject,
     };
   }
 }
