@@ -75,7 +75,7 @@ const App: React.FC = () => {
           setTapStatus("Ready!");
         } catch (e) {
           console.error(e);
-          toast.error("UC model self-test failed");
+          toast.error(`Tap2Music model: ${subMode} self-test failed`);
           setTapStatus("Model Test failed!");
         }
         setLoadingModel(false);
@@ -128,7 +128,7 @@ const App: React.FC = () => {
       noteEventsRef.current = [...noteEventsRef.current, newNote];
       setNoteEvents([...noteEventsRef.current]);
     },
-    [midiOutEnabled]
+    [midiOutEnabled],
   );
 
   const triggerNoteOff = useCallback(
@@ -147,11 +147,11 @@ const App: React.FC = () => {
 
       const now = performance.now();
       noteEventsRef.current = noteEventsRef.current.map((n) =>
-        n.pitch === pitch && !n.endTime ? { ...n, endTime: now } : n
+        n.pitch === pitch && !n.endTime ? { ...n, endTime: now } : n,
       );
       setNoteEvents([...noteEventsRef.current]);
     },
-    [midiOutEnabled]
+    [midiOutEnabled],
   );
 
   // Public API exposed for the model/input
@@ -177,7 +177,7 @@ const App: React.FC = () => {
       pitchMap.current.set(inputPitch, triggeredPitch);
       triggerNoteOn(triggeredPitch, velocity);
     },
-    [mode, triggerNoteOn]
+    [mode, triggerNoteOn],
   );
 
   const noteOff = useCallback(
@@ -192,7 +192,7 @@ const App: React.FC = () => {
       triggerNoteOff(triggeredPitch);
       pitchMap.current.delete(inputPitch);
     },
-    [mode, triggerNoteOff]
+    [mode, triggerNoteOff],
   );
 
   const noteOnRef = useRef(noteOn);
@@ -286,7 +286,7 @@ const App: React.FC = () => {
       const now = performance.now();
       const cutoff = now - 10000;
       noteEventsRef.current = noteEventsRef.current.filter(
-        (n) => (n.endTime || now) > cutoff
+        (n) => (n.endTime || now) > cutoff,
       );
       setNoteEvents([...noteEventsRef.current]);
     }, 5000);
@@ -296,7 +296,7 @@ const App: React.FC = () => {
   const availableSubModes = (
     Object.entries(engineMap) as [
       InferenceSubMode,
-      (typeof engineMap)[InferenceSubMode]
+      (typeof engineMap)[InferenceSubMode],
     ][]
   ).filter(([, v]) => v.factory !== null);
 

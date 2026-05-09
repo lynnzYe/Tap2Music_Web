@@ -138,7 +138,7 @@ class UCTapWrapper extends BaseTapWrapper {
       let feat = tf.tensor(
         [[this.lastPitchIdx, log1pDeltaTime, log1pDur, velocity]],
         [1, 4],
-        "float32"
+        "float32",
       );
       const [plgt, hi] = this.dec.forward(feat, prevHidden);
 
@@ -207,7 +207,7 @@ class HandTapWrapper extends BaseTapWrapper {
       let feat = tf.tensor(
         [[this.lastPitchIdx, log1pDeltaTime, log1pDur, velocity, hand]],
         [1, 5],
-        "float32"
+        "float32",
       );
       const [plgt, hi] = this.dec.forward(feat, prevHidden);
 
@@ -235,7 +235,163 @@ class HandTapWrapper extends BaseTapWrapper {
   }
 }
 
+class RTPTapWrapper extends BaseTapWrapper {
+  constructor() {
+    super();
+    this.dec = new my.RTPModel();
+    // History stores { pitch, time } of the user's actual taps
+    this.history = [];
+  }
+
+  reset() {
+    super.reset();
+    this.history = [];
+  }
+
+  // Calculate rank of currentPitch against the previous nNote taps
+  getNRank(currentPitch, nNote = 10) {
+    if (this.history.length === 0) return 0;
+
+    // Look at up to nNote - 1 past taps + current pitch = nNote window
+    const windowSize = nNote - 1;
+    const window = this.history.slice(-windowSize);
+
+    let rank = 0;
+    // Count preceding notes >= current pitch (matches lexsort descending)
+    for (let i = 0; i < window.length; i++) {
+      if (window[i].pitch >= currentPitch) rank++;
+    }
+    return rank;
+  }
+
+  // Calculate time rank of currentPitch against continuous preceding cluster
+  getTimeRank(currentPitch, currentTime, timeThresh = 0.05, nNote = 10) {
+    if (this.history.length === 0) return 10; // sentinel
+
+    let validNotes = [];
+    let prevTime = currentTime;
+    const windowSize = nNote - 1;
+
+    // Walk backwards through history to find the continuous time cluster
+    // Stop if the gap (ioi) exceeds threshold or we hit the window limit
+    for (
+      let i = this.history.length - 1;
+      i >= Math.max(0, this.history.length - windowSize);
+      i--
+    ) {
+      const histNote = this.history[i];
+      const ioi = (prevTime - histNote.time) / 1000.0;
+
+      if (ioi < timeThresh) {
+        validNotes.unshift(histNote);
+        prevTime = histNote.time;
+      } else {
+        break;
+      }
+    }
+
+    if (validNotes.length === 0) return 10; // sentinel
+
+    let rank = 0;
+    // Count preceding notes <= current pitch (matches lexsort ascending)
+    for (let i = 0; i < validNotes.length; i++) {
+      if (validNotes[i].pitch <= currentPitch) rank++;
+    }
+    return rank;
+  }
+
+  predict({
+    time,
+    velocity = 64,
+    pitch, // MUST pass the actual tap pitch now (it doesn't have to be gt, just provide RTP information)
+    samplingType = "temperature", // Or can be refactored to take n-rank and time-rank features
+    temperature = 1.1,
+    topP = 0.7,
+  }) {
+    const start = performance.now();
+    let deltaTime =
+      this.lastTime === null ? 0 : (time - this.lastTime) / 1000.0;
+    let lastDur = Math.min(this.lastDur, deltaTime);
+
+    if (deltaTime < 0) {
+      console.log("Warning: Specified time is in the past");
+      deltaTime = 0;
+    }
+
+    // Seed variables if this is the first step
+    if (this.lastTime === null) {
+      this.lastPitchIdx = 88; // Start token for the network input
+    }
+
+    if (this.lastPitchIdx < 0 || this.lastPitchIdx >= my.PIANO_NUM_KEYS + 1) {
+      throw new Error("Specified MIDI note is out of piano's range");
+    }
+
+    const log1pDeltaTime = Math.log1p(deltaTime);
+    const log1pDur = Math.log1p(lastDur);
+
+    // Compute relative positions based on the CURRENT tap pitch vs PAST taps
+    const nRank = this.getNRank(pitch, 10);
+    const timeRank = this.getTimeRank(pitch, time, 0.05, 10);
+
+    const prevHidden = this.lastHidden;
+    const [pitchIdx, hidden] = tf.tidy(() => {
+      // Input features exactly match your python feat extraction:
+      // [prev_predicted_pitch, log_ioi, log_dur, velocity, n_rank, time_rank]
+      let feat = tf.tensor(
+        [
+          [
+            this.lastPitchIdx,
+            log1pDeltaTime,
+            log1pDur,
+            velocity,
+            nRank,
+            timeRank,
+          ],
+        ],
+        [1, 6],
+        "float32",
+      );
+      const [plgt, hi] = this.dec.forward(feat, prevHidden);
+
+      let pIdx = 88;
+      if (samplingType === "temperature") {
+        pIdx = temperatureSample(plgt, temperature);
+      } else if (samplingType === "nucleus") {
+        pIdx = nucleusSample(plgt, topP);
+      } else {
+        throw new Error("Unknown sampling type:", samplingType);
+      }
+      return [pIdx, hi];
+    });
+
+    const end = performance.now();
+    const inferTime = ((end - start) / 1000).toFixed(3);
+    if (prevHidden !== null) prevHidden.dispose();
+    console.debug(
+      "Tap2Music (RTP):",
+      `🎶 ${pitchIdx + 21}`,
+      `⌚ ${inferTime}s`,
+      `| nR: ${nRank}, tR: ${timeRank}`,
+    );
+
+    // 1. Store the PREDICTED pitch for the next step's network input
+    this.lastPitchIdx = pitchIdx;
+    this.lastTime = time;
+    this.lastHidden = hidden;
+
+    // 2. Store the TAP pitch in history for the next step's rank calculations
+    this.history.push({ pitch: pitch, time: time });
+    if (this.history.length > 10) {
+      this.history.shift();
+    }
+
+    return pitchIdx + 21;
+  }
+}
+
 (function (tf, my) {
   my.UCTapWrapper = UCTapWrapper;
   my.HandTapWrapper = HandTapWrapper;
+  my.RTPTapWrapper = RTPTapWrapper;
 })(window.tf, window.my);

@@ -1,5 +1,5 @@
 
-import { UserCircle, Hand, Layers } from "lucide-react";
+import { UserCircle, Hand, Layers, Piano } from "lucide-react";
 
 type RawTapContext = {
   now: number;
@@ -13,6 +13,12 @@ type UCPredictInput = {
   velocity?: number | null
 };
 
+interface RTPPredictInput {
+  time: number;
+  velocity: number;
+  pitch: number;
+}
+
 type HandPredictInput = {
   time: number
   velocity?: number | null
@@ -25,6 +31,7 @@ type DummyInput = {
 
 type InferenceInputMap = {
   uc: UCPredictInput;
+  rtp: UCPredictInput;
   hand: HandPredictInput;
   dummy: DummyInput;
   // experimental: ExperimentalPredictInput;
@@ -41,6 +48,7 @@ export interface InferenceConfig {
 const modelTestStatus: Record<InferenceSubMode, boolean> = {
   uc: false,
   hand: false,
+  rtp: false,
   experimental: false,
   dummy: true
 };
@@ -159,6 +167,47 @@ class HandInferenceEngine extends BaseInferenceEngine<HandPredictInput> {
   }
 }
 
+class RTPInferenceEngine extends BaseInferenceEngine<RTPPredictInput> {
+  readonly kind = 'rtp';
+
+  constructor() {
+    super();
+    if (!window.my?.RTPTapWrapper) throw new Error("RTPTapWrapper Not loaded");
+    this.tapper = new window.my.RTPTapWrapper();
+  }
+
+  async selfTest() {
+    if (window.my?.testRTPTap && !modelTestStatus.rtp) {
+      await window.my.testRTPTap();
+      modelTestStatus.rtp = true;
+      console.debug("RTP model self-test passed");
+    }
+  }
+
+  protected initInference() {
+    // Initializing with a dummy "start" tap. 
+    // You may want to define a specific dummy pitch or extract the first actual note
+    this.predict(this.prepareInput({ now: 0, velocity: 0, pitch: 88 }));
+  }
+
+  protected prepareInput(ctx: RawTapContext): RTPPredictInput {
+    // Ensure that ctx.pitch is being populated by your MIDI listener/UI!
+    if (ctx.pitch === undefined || ctx.pitch === null) {
+      throw new Error("RTPInferenceEngine requires a pitch in the RawTapContext");
+    }
+
+    return {
+      time: ctx.now,
+      velocity:
+        ctx.velocity == null
+          ? Math.floor(Math.random() * 41) + 60
+          : ctx.velocity,
+      pitch: ctx.pitch // Pass the actual key tapped by the user
+    };
+  }
+}
+
+
 class DummyInferenceEngine extends BaseInferenceEngine<DummyInput> {
   readonly kind = 'dummy';
   constructor() {
@@ -195,6 +244,11 @@ export const engineMap = {
     factory: () => new HandInferenceEngine(),
     label: "Hand Condition",
     icon: Hand,
+  },
+  rtp: {
+    factory: () => new RTPInferenceEngine(),
+    label: "Relative Tap Position",
+    icon: Piano,
   },
   dummy: {
     factory: () => new DummyInferenceEngine(),
